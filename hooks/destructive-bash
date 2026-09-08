@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# PreToolUse: block commands whose damage cannot be undone by a later test run.
+
+set -uo pipefail
+
+payload="$(cat)"
+
+command_text="$(printf '%s' "$payload" \
+    | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
+    | head -1)"
+
+block() {
+    printf 'BLOCKED: %s\n\n%s\n' "$1" "$2" >&2
+    exit 2
+}
+
+case "$command_text" in
+    *"alembic downgrade"*)
+        block "alembic downgrade" \
+"Downgrades drop columns and partitions. Restore from a backup or write a new
+forward migration instead."
+        ;;
+    *"push --force"*|*"push -f "*|*"push --force-with-lease"*)
+        block "force push" \
+"Both repositories are on shared feature branches with unpushed work. Rewriting
+published history loses commits that exist nowhere else."
+        ;;
+    *"git checkout -- ."*|*"git checkout ."*|*"git restore ."*|*"git reset --hard"*)
+        block "discarding the working tree" \
+"The backend currently holds 8 uncommitted modified files on the security
+surface. This command deletes them with no recovery path."
+        ;;
+esac
+
+exit 0

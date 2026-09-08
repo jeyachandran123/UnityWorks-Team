@@ -79,6 +79,45 @@ expect "secret-guard allows an unnamed long base64 asset string" 0 secret-guard 
 expect "secret-guard allows a short api_key" 0 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/config.py","content":"api_key = \"short123\""}}'
 
+# ---- contract-reminder ----------------------------------------------------
+
+expect_output "contract-reminder names the export command on a route edit" "export_openapi" contract-reminder \
+    '{"tool_name":"Edit","tool_input":{"file_path":"/repo/app/api/product.py"}}'
+
+expect_output "contract-reminder is silent outside app/api" "" contract-reminder \
+    '{"tool_name":"Edit","tool_input":{"file_path":"/repo/app/domain/incidents.py"}}'
+
+# ---- protected-tree -------------------------------------------------------
+
+expect "protected-tree blocks a vision_os edit" 2 protected-tree \
+    '{"tool_name":"Edit","tool_input":{"file_path":"/repo/vision_os/kernel/runtime.py"}}'
+
+expect "protected-tree blocks a compliance edit" 2 protected-tree \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/compliance/evaluator.py"}}'
+
+expect "protected-tree allows an app edit" 0 protected-tree \
+    '{"tool_name":"Edit","tool_input":{"file_path":"/repo/app/vision/manager.py"}}'
+
+expect "protected-tree allows a test edit" 0 protected-tree \
+    '{"tool_name":"Edit","tool_input":{"file_path":"/repo/tests/app/test_reports.py"}}'
+
+# ---- destructive-bash -----------------------------------------------------
+
+expect "destructive-bash blocks alembic downgrade" 2 destructive-bash \
+    '{"tool_name":"Bash","tool_input":{"command":"alembic downgrade -1"}}'
+
+expect "destructive-bash blocks a force push" 2 destructive-bash \
+    '{"tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+
+expect "destructive-bash blocks discarding the tree" 2 destructive-bash \
+    '{"tool_name":"Bash","tool_input":{"command":"git checkout -- ."}}'
+
+expect "destructive-bash allows alembic upgrade" 0 destructive-bash \
+    '{"tool_name":"Bash","tool_input":{"command":"alembic upgrade head"}}'
+
+expect "destructive-bash allows an ordinary push" 0 destructive-bash \
+    '{"tool_name":"Bash","tool_input":{"command":"git push origin feat/x"}}'
+
 # ---------------------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

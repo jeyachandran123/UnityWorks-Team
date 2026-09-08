@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# PostToolUse: after a backend route edit, name the two follow-up commands.
+#
+# Advisory by design — PostToolUse runs after the edit has already succeeded and
+# cannot block. What it prevents is not a bad edit but a forgotten second step in
+# a different repository, which no test in either repo can observe.
+
+set -uo pipefail
+
+payload="$(cat)"
+
+path="$(printf '%s' "$payload" \
+    | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
+    | head -1)"
+
+case "$path" in
+    */app/api/*)
+        cat >&2 <<'MSG'
+Route surface changed. The frontend is typed from the committed schema, so two
+commands must follow or the contract silently drifts:
+
+    python scripts/export_openapi.py
+    cd ../unityworks-vision-ai-frontend && npm run types:generate
+MSG
+        ;;
+esac
+
+exit 0

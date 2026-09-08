@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# PreToolUse: block edits to the migrated-verbatim trees.
+#
+# vision_os/ is byte-identical to its source and compliance/ and tools/ are
+# excluded from lint for the same reason. A test proves the dependency arrow, but
+# no test proves you MEANT to edit here. This asks for that intent explicitly.
+
+set -uo pipefail
+
+payload="$(cat)"
+
+path="$(printf '%s' "$payload" \
+    | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
+    | head -1)"
+
+# tests/vision_os and tests/compliance are ordinary test files, not the platform.
+case "$path" in
+    */tests/*) exit 0 ;;
+esac
+
+case "$path" in
+    */vision_os/*|*/compliance/*|*/tools/*)
+        cat >&2 <<MSG
+BLOCKED: $path is inside a migrated-verbatim tree.
+
+vision_os/, compliance/ and tools/ are moved unchanged from their source and are
+excluded from lint for that reason. Editing here breaks the migration invariant
+asserted by tests/app/test_migration.py.
+
+If the change is genuinely required, say so explicitly and it can be made
+deliberately rather than incidentally.
+MSG
+        exit 2
+        ;;
+esac
+
+exit 0
