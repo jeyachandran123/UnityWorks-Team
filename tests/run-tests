@@ -44,6 +44,28 @@ expect_output() {
     esac
 }
 
+# expect_via_launcher <name> <expected-exit> <script> <json-payload>
+# Same as expect, but drives the payload through hooks/run-hook.cmd — the
+# polyglot launcher every product repo's settings.json actually invokes —
+# instead of calling the hook script directly. Run under bash this only
+# exercises the launcher's Unix fallthrough half (the bottom `exec bash ...`
+# line), not the cmd.exe half where C1 lives, but it still proves the
+# launcher dispatches to the right script and propagates its exit code
+# rather than swallowing it.
+expect_via_launcher() {
+    local name="$1" want="$2" script="$3" payload="$4"
+    local got
+    printf '%s' "$payload" | bash "${HOOKS}/run-hook.cmd" "$script" >/dev/null 2>&1
+    got=$?
+    if [ "$got" -eq "$want" ]; then
+        printf 'ok   %s\n' "$name"
+        pass=$((pass + 1))
+    else
+        printf 'FAIL %s (expected exit %s, got %s)\n' "$name" "$want" "$got"
+        fail=$((fail + 1))
+    fi
+}
+
 # ---- secret-guard ---------------------------------------------------------
 
 expect "secret-guard blocks a write to .env" 2 secret-guard \
@@ -79,6 +101,9 @@ expect "secret-guard allows an unnamed long base64 asset string" 0 secret-guard 
 expect "secret-guard allows a short api_key" 0 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/config.py","content":"api_key = \"short123\""}}'
 
+expect_via_launcher "secret-guard blocks a write to .env through run-hook.cmd" 2 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/.env","content":"X=1"}}'
+
 # ---- contract-reminder ----------------------------------------------------
 
 expect_output "contract-reminder names the export command on a route edit" "export_openapi" contract-reminder \
@@ -86,6 +111,12 @@ expect_output "contract-reminder names the export command on a route edit" "expo
 
 expect_output "contract-reminder is silent outside app/api" "" contract-reminder \
     '{"tool_name":"Edit","tool_input":{"file_path":"/repo/app/domain/incidents.py"}}'
+
+# Claude Code on Windows supplies native backslash absolute paths, not the
+# forward-slash paths above. The case patterns must normalise separators
+# before matching or this fires silently (C2).
+expect_output "contract-reminder names the export command on a Windows backslash route edit" "export_openapi" contract-reminder \
+    '{"tool_name":"Edit","tool_input":{"file_path":"C:\\Users\\Jayachandran\\ProjectsAndDocs\\atlas\\unityworks-vision-ai-backend\\app\\api\\product.py"}}'
 
 # ---- protected-tree -------------------------------------------------------
 
@@ -101,6 +132,15 @@ expect "protected-tree allows an app edit" 0 protected-tree \
 expect "protected-tree allows a test edit" 0 protected-tree \
     '{"tool_name":"Edit","tool_input":{"file_path":"/repo/tests/app/test_reports.py"}}'
 
+# Windows backslash absolute path, as Claude Code actually supplies on this
+# platform (C2). Before the separator-normalisation fix this fell through
+# every case pattern silently and returned 0.
+expect "protected-tree blocks a vision_os edit with a Windows backslash path" 2 protected-tree \
+    '{"tool_name":"Edit","tool_input":{"file_path":"C:\\Users\\Jayachandran\\ProjectsAndDocs\\atlas\\unityworks-vision-ai-backend\\vision_os\\kernel\\runtime.py"}}'
+
+expect_via_launcher "protected-tree blocks a vision_os edit through run-hook.cmd" 2 protected-tree \
+    '{"tool_name":"Edit","tool_input":{"file_path":"/repo/vision_os/kernel/runtime.py"}}'
+
 # ---- destructive-bash -----------------------------------------------------
 
 expect "destructive-bash blocks alembic downgrade" 2 destructive-bash \
@@ -108,6 +148,12 @@ expect "destructive-bash blocks alembic downgrade" 2 destructive-bash \
 
 expect "destructive-bash blocks a force push" 2 destructive-bash \
     '{"tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+
+# Bare `git push -f` (no explicit remote/branch — pushes the tracked
+# upstream) has no trailing space after "-f", so a pattern requiring one
+# missed it (I3). It is exactly as destructive as the explicit form below.
+expect "destructive-bash blocks a bare git push -f" 2 destructive-bash \
+    '{"tool_name":"Bash","tool_input":{"command":"git push -f"}}'
 
 expect "destructive-bash blocks discarding the tree" 2 destructive-bash \
     '{"tool_name":"Bash","tool_input":{"command":"git checkout -- ."}}'
@@ -117,6 +163,9 @@ expect "destructive-bash allows alembic upgrade" 0 destructive-bash \
 
 expect "destructive-bash allows an ordinary push" 0 destructive-bash \
     '{"tool_name":"Bash","tool_input":{"command":"git push origin feat/x"}}'
+
+expect_via_launcher "destructive-bash blocks alembic downgrade through run-hook.cmd" 2 destructive-bash \
+    '{"tool_name":"Bash","tool_input":{"command":"alembic downgrade -1"}}'
 
 # ---- generated-file -------------------------------------------------------
 
@@ -128,6 +177,14 @@ expect "generated-file allows other shared types" 0 generated-file \
 
 expect "generated-file allows the generator itself" 0 generated-file \
     '{"tool_name":"Edit","tool_input":{"file_path":"/repo/scripts/generate-types.mjs"}}'
+
+# Windows backslash absolute path (C2). Before the fix the literal-slash
+# case pattern never matched this and the hand-edit sailed through.
+expect "generated-file blocks a Windows backslash path to openapi.ts" 2 generated-file \
+    '{"tool_name":"Edit","tool_input":{"file_path":"C:\\Users\\Jayachandran\\ProjectsAndDocs\\atlas\\unityworks-vision-ai-frontend\\src\\shared\\types\\openapi.ts"}}'
+
+expect_via_launcher "generated-file blocks openapi.ts through run-hook.cmd" 2 generated-file \
+    '{"tool_name":"Edit","tool_input":{"file_path":"/repo/src/shared/types/openapi.ts"}}'
 
 # ---------------------------------------------------------------------------
 

@@ -20,7 +20,7 @@ case "$command_text" in
 "Downgrades drop columns and partitions. Restore from a backup or write a new
 forward migration instead."
         ;;
-    *"push --force"*|*"push -f "*|*"push --force-with-lease"*)
+    *"push --force"*|*"push -f"*|*"push --force-with-lease"*)
         block "force push" \
 "Both repositories are on shared feature branches with unpushed work. Rewriting
 published history loses commits that exist nowhere else."

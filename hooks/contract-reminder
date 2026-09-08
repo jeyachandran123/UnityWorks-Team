@@ -13,6 +13,15 @@ path="$(printf '%s' "$payload" \
     | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
     | head -1)"
 
+# Claude Code on Windows supplies native backslash absolute paths. $path
+# was extracted from raw JSON without unescaping, so each real backslash is
+# still doubled on the wire (C:\\Users\\...\\app\\api\\product.py).
+# Collapse each doubled pair to a single "/" — a naive single-backslash
+# swap would instead leave doubled slashes (app//api) that no longer match
+# this multi-segment literal pattern. Without this the reminder is
+# silently never printed on Windows.
+path="${path//\\\\//}"
+
 case "$path" in
     */app/api/*)
         cat >&2 <<'MSG'

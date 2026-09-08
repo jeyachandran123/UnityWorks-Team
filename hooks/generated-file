@@ -13,6 +13,15 @@ path="$(printf '%s' "$payload" \
     | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
     | head -1)"
 
+# Claude Code on Windows supplies native backslash absolute paths. $path
+# was extracted from raw JSON without unescaping, so each real backslash is
+# still doubled on the wire (C:\\Users\\...\\src\\shared\\types\\openapi.ts).
+# Collapse each doubled pair to a single "/" — a naive single-backslash
+# swap would instead leave doubled slashes (src//shared) that no longer
+# match this multi-segment literal pattern. Without this the guard
+# silently returns 0 on Windows.
+path="${path//\\\\//}"
+
 case "$path" in
     */src/shared/types/openapi.ts)
         cat >&2 <<'MSG'
