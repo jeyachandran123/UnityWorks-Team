@@ -118,6 +118,17 @@ expect "destructive-bash allows alembic upgrade" 0 destructive-bash \
 expect "destructive-bash allows an ordinary push" 0 destructive-bash \
     '{"tool_name":"Bash","tool_input":{"command":"git push origin feat/x"}}'
 
+# ---- generated-file -------------------------------------------------------
+
+expect "generated-file blocks a hand-edit of openapi.ts" 2 generated-file \
+    '{"tool_name":"Edit","tool_input":{"file_path":"/repo/src/shared/types/openapi.ts"}}'
+
+expect "generated-file allows other shared types" 0 generated-file \
+    '{"tool_name":"Edit","tool_input":{"file_path":"/repo/src/shared/types/index.ts"}}'
+
+expect "generated-file allows the generator itself" 0 generated-file \
+    '{"tool_name":"Edit","tool_input":{"file_path":"/repo/scripts/generate-types.mjs"}}'
+
 # ---------------------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

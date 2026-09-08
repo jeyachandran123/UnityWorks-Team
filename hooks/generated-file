@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# PreToolUse: src/shared/types/openapi.ts is emitted by scripts/generate-types.mjs.
+#
+# A hand-edit here survives review (it is valid TypeScript, and it compiles) and
+# then vanishes at the next types:generate — after having quietly made the
+# frontend agree with an API the backend does not serve.
+
+set -uo pipefail
+
+payload="$(cat)"
+
+path="$(printf '%s' "$payload" \
+    | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
+    | head -1)"
+
+case "$path" in
+    */src/shared/types/openapi.ts)
+        cat >&2 <<'MSG'
+BLOCKED: src/shared/types/openapi.ts is generated, not written.
+
+Its only legitimate author is scripts/generate-types.mjs. To change it, change
+the backend schema and regenerate:
+
+    cd ../unityworks-vision-ai-backend && python scripts/export_openapi.py
+    cd ../unityworks-vision-ai-frontend && npm run types:generate
+MSG
+        exit 2
+        ;;
+esac
+
+exit 0
