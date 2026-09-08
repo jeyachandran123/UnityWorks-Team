@@ -61,6 +61,24 @@ expect "secret-guard allows .env.example" 0 secret-guard \
 expect "secret-guard allows ordinary source" 0 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/main.py","content":"def run(): pass"}}'
 
+# A secret-shaped keyword appearing only as a substring of a descriptive
+# identifier must not block — these are real fixture/build content, not
+# leaked secrets, and over-blocking them is what gets a guard disabled.
+expect "secret-guard allows a hash assigned to a descriptively-named field" 0 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/tests/fixtures/auth.py","content":"expected_password_hash = \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\""}}'
+
+expect "secret-guard allows a commit hash assigned to BUILD_TOKEN" 0 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/scripts/build.py","content":"BUILD_TOKEN = \"a7dcf87dbefa45a710fdce1844c7bc20abc5953b\""}}'
+
+expect "secret-guard allows a TypeScript import" 0 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/frontend/src/index.ts","content":"import { LongDescriptiveComponentNameForRouting } from \"../components/shared/layout\""}}'
+
+expect "secret-guard allows an unnamed long base64 asset string" 0 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/assets.py","content":"ASSET_DATA = \"aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkaGVsbG93b3JsZA==\""}}'
+
+expect "secret-guard allows a short api_key" 0 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/config.py","content":"api_key = \"short123\""}}'
+
 # ---------------------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
