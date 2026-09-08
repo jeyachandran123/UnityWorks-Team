@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Hook tests. Each case pipes a PreToolUse/PostToolUse payload into a hook and
+# asserts its exit code. Exit 2 means "block"; exit 0 means "allow".
+#
+# Run: bash tests/run-tests
+
+set -uo pipefail
+
+HOOKS="$(cd "$(dirname "$0")/../hooks" && pwd)"
+pass=0
+fail=0
+
+# expect <name> <expected-exit> <script> <json-payload>
+expect() {
+    local name="$1" want="$2" script="$3" payload="$4"
+    local got
+    printf '%s' "$payload" | bash "${HOOKS}/${script}" >/dev/null 2>&1
+    got=$?
+    if [ "$got" -eq "$want" ]; then
+        printf 'ok   %s\n' "$name"
+        pass=$((pass + 1))
+    else
+        printf 'FAIL %s (expected exit %s, got %s)\n' "$name" "$want" "$got"
+        fail=$((fail + 1))
+    fi
+}
+
+# expect_output <name> <expected-substring-or-empty> <script> <json-payload>
+# Asserts on the hook's combined stdout+stderr. An empty expected string means
+# the hook must print nothing at all.
+expect_output() {
+    local name="$1" want="$2" script="$3" payload="$4"
+    local out
+    out="$(printf '%s' "$payload" | bash "${HOOKS}/${script}" 2>&1)"
+    if [ -z "$want" ]; then
+        if [ -z "$out" ]; then
+            printf 'ok   %s\n' "$name"; pass=$((pass + 1)); return
+        fi
+        printf 'FAIL %s (expected no output, got: %s)\n' "$name" "$out"; fail=$((fail + 1)); return
+    fi
+    case "$out" in
+        *"$want"*) printf 'ok   %s\n' "$name"; pass=$((pass + 1)) ;;
+        *) printf 'FAIL %s (output did not contain %s)\n' "$name" "$want"; fail=$((fail + 1)) ;;
+    esac
+}
+
+# ---- secret-guard ---------------------------------------------------------
+
+expect "secret-guard blocks a write to .env" 2 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/.env","content":"X=1"}}'
+
+expect "secret-guard blocks an AWS key in content" 2 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/config.py","content":"KEY = \"AKIAIOSFODNN7EXAMPLE\""}}'
+
+expect "secret-guard blocks a long hex secret" 2 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/x.py","content":"SECRET_KEY = \"0123456789abcdef0123456789abcdef0123456789abcdef\""}}'
+
+expect "secret-guard allows .env.example" 0 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/.env.example","content":"SECRET_KEY=changeme"}}'
+
+expect "secret-guard allows ordinary source" 0 secret-guard \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/main.py","content":"def run(): pass"}}'
+
+# ---------------------------------------------------------------------------
+
+printf '\n%s passed, %s failed\n' "$pass" "$fail"
+[ "$fail" -eq 0 ]
