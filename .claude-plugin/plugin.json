@@ -1,0 +1,9 @@
+{
+  "name": "unityworks-team",
+  "description": "Specialist review roster, procedures and gates for the UnityWorks Vision AI repositories",
+  "version": "0.1.0",
+  "author": {
+    "name": "Jeyachandran S"
+  },
+  "keywords": ["unityworks", "vision-os", "review", "gates"]
+}

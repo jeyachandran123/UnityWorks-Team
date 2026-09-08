@@ -1,0 +1,15 @@
+{
+  "name": "unityworks-local",
+  "description": "Local marketplace for the UnityWorks agent team plugin",
+  "owner": {
+    "name": "Jeyachandran S"
+  },
+  "plugins": [
+    {
+      "name": "unityworks-team",
+      "description": "Specialist review roster, procedures and gates for the UnityWorks Vision AI repositories",
+      "version": "0.1.0",
+      "source": "./"
+    }
+  ]
+}
