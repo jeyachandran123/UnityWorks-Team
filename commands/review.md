@@ -16,7 +16,7 @@ Arguments: $ARGUMENTS
 2. **Role.** The first word of the arguments. Available:
    - plugin roles: `security-engineer`, `architecture-auditor`, `backend-engineer`,
      `frontend-engineer`, `ux-architect`, `devops-engineer`, `qa-engineer`, `product-analyst`,
-     `release-scribe` → agent type `unityworks-team:<role>`
+     `release-scribe`, `ai-ml-architect` → agent type `unityworks-team:<role>`
    - project roles: each `agent = <name>` in `$REPO_SELF/.claude/team.conf` → agent type `<name>`
 
    If the role is missing or unknown, reply with that list and stop.

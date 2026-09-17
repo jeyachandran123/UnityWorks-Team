@@ -1,7 +1,7 @@
 {
   "name": "unityworks-team",
   "description": "Project-agnostic engineering team for Claude Code: specialist reviewers, verification gates and guards driven by each repository's .claude/team.conf",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "author": {
     "name": "Jeyachandran S"
   },

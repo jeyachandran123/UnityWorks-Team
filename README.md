@@ -56,7 +56,7 @@ Repositories find each other by `kind`, never by folder name or location.
 ### Specialists (`agents/`)
 
 `security-engineer` · `architecture-auditor` · `backend-engineer` · `frontend-engineer` ·
-`ux-architect` · `devops-engineer` · `qa-engineer` · `product-analyst` · `release-scribe` · `tech-lead`
+`ux-architect` · `devops-engineer` · `qa-engineer` · `product-analyst` · `release-scribe` · `ai-ml-architect` · `tech-lead`
 
 Generic by design; each reads the project's `CLAUDE.md`, `team.conf` and its role brief before working.
 They advise and never change code: reports go to `<reviews>/<date>/<role>.md` in the repo reviewed.
@@ -64,7 +64,7 @@ Projects add their own specialists in `.claude/agents/` and list them as `agent 
 
 ### Skills
 
-`evidence-report` (the report shape) · `invariant-audit` (prove a test enforces an invariant by
+`evidence-report` (the report shape) · `ai-ml-architecture` (model paths, prompts, retrieval, grounding — used by `ai-ml-architect`) · `invariant-audit` (prove a test enforces an invariant by
 mutating a scratch copy) · `team-setup` (the configuration format and `/team-init` procedure).
 
 ### Hooks (always on, driven by team.conf)

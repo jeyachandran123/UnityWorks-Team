@@ -25,7 +25,7 @@ Read the `harden = <area> :: <roles…>` lines in `$REPO_SELF/.claude/team.conf`
 - No area → the `default` line.
 - No matching line (or no team.conf) → pick 3–5 from `security-engineer`, `architecture-auditor`,
   `backend-engineer`, `frontend-engineer`, `ux-architect`, `devops-engineer`, `qa-engineer`,
-  `product-analyst`, `release-scribe`, plus any `agent = <name>` project agents, whose descriptions
+  `product-analyst`, `release-scribe`, `ai-ml-architect`, plus any `agent = <name>` project agents, whose descriptions
   match the area or the changed files. Say which and why.
 
 Plugin roles dispatch as `unityworks-team:<role>`; project agents by their bare name. Tell the user the
