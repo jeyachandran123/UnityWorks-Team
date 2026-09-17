@@ -29,6 +29,8 @@ mkdir -p "$BACKEND/.git" "$BACKEND/vision_os" "$BACKEND/scripts" \
          "$FRONTEND/.git" "$FRONTEND/scripts" \
          "$OTHER/.git" "$OTHER/tools" "$OTHER/scripts"
 touch "$BACKEND/scripts/export_openapi.py" "$FRONTEND/scripts/generate-types.mjs"
+SCRATCH="$FIX/scratch/unityworks-vision-ai-backend"   # as made by scratch-copy
+mkdir -p "$SCRATCH/vision_os" && touch "$SCRATCH/.unityworks-scratch-copy"
 
 # win <posix-path> — the path as Claude Code on Windows puts it on the wire:
 # native backslashes, each doubled by JSON escaping. Empty when cygpath is
@@ -233,6 +235,40 @@ fi
 
 expect_via_launcher "generated-file blocks openapi.ts through run-hook.cmd" 2 generated-file \
     "$(edit_payload "$FRONTEND/src/shared/types/openapi.ts")"
+
+# ---- agent-scope ----------------------------------------------------------
+
+agent_write() { printf '{"agent_type":"%s","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$1" "$2"; }
+agent_bash() { printf '{"agent_type":"%s","tool_name":"Bash","tool_input":{"command":"%s"}}' "$1" "$2"; }
+
+expect "agent-scope lets a specialist file its report" 0 agent-scope \
+    "$(agent_write unityworks-team:security-engineer "$BACKEND/docs/reviews/2026-09-17/security-engineer.md")"
+expect "agent-scope blocks a specialist writing source" 2 agent-scope \
+    "$(agent_write unityworks-team:security-engineer "$BACKEND/app/auth/tokens.py")"
+expect "agent-scope blocks a specialist editing source" 2 agent-scope \
+    '{"agent_type":"unityworks-team:qa-engineer","tool_name":"Edit","tool_input":{"file_path":"/repo/tests/app/test_x.py"}}'
+expect "agent-scope allows a mutation inside a scratch copy" 0 agent-scope \
+    "$(agent_write unityworks-team:architecture-auditor "$SCRATCH/vision_os/x.py")"
+expect "agent-scope blocks a specialist committing" 2 agent-scope \
+    "$(agent_bash unityworks-team:backend-engineer "git add -A && git commit -m x")"
+expect "agent-scope blocks a specialist installing" 2 agent-scope \
+    "$(agent_bash unityworks-team:frontend-engineer "npm install left-pad")"
+expect "agent-scope blocks a specialist creating a worktree" 2 agent-scope \
+    "$(agent_bash unityworks-team:qa-engineer "git worktree add ../_audit HEAD")"
+expect "agent-scope blocks alembic upgrade on the configured database" 2 agent-scope \
+    "$(agent_bash unityworks-team:devops-engineer ".venv/Scripts/python.exe -m alembic upgrade head")"
+expect "agent-scope allows alembic upgrade on a disposable sqlite file" 0 agent-scope \
+    "$(agent_bash unityworks-team:devops-engineer "DATABASE_URL_OVERRIDE=sqlite+aiosqlite:///C:/tmp/x/check.db .venv/Scripts/python.exe -m alembic upgrade head")"
+expect "agent-scope lets a specialist run tests and read history" 0 agent-scope \
+    "$(agent_bash unityworks-team:qa-engineer "git log --oneline -5 && .venv/Scripts/python.exe -m pytest tests/app")"
+expect "agent-scope accepts an unqualified roster name" 2 agent-scope \
+    "$(agent_write tech-lead "$BACKEND/app/main.py")"
+expect "agent-scope leaves the main session alone" 0 agent-scope \
+    '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/auth/tokens.py","content":"x"}}'
+expect "agent-scope leaves other agents alone" 0 agent-scope \
+    "$(agent_bash general-purpose "git commit -m x")"
+expect_via_launcher "agent-scope blocks through run-hook.cmd" 2 agent-scope \
+    "$(agent_write unityworks-team:security-engineer "$BACKEND/app/auth/tokens.py")"
 
 # ---- verify-gate ----------------------------------------------------------
 #

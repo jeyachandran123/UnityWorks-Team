@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# scratch-copy <repo-dir>          copy a repository's WORKING TREE (uncommitted
+#                                  changes included) to a temp dir; print its path
+# scratch-copy --remove <copy>     delete a copy this script made, and nothing else
+#
+#   backend:  run tests in the copy with the ORIGINAL venv's python:
+#               "$REPO/.venv/Scripts/python.exe" -m pytest ...
+#             imports resolve to the copy (pytest puts the rootdir first).
+#   frontend: node_modules is linked, not copied, then: npx vitest run tests/<file>
+#
+# .git is excluded on purpose: nothing in the copy can be committed or pushed,
+# and the unityworks-team path guards do not treat it as the real repository.
+
+set -euo pipefail
+
+MARKER=".unityworks-scratch-copy"
+
+if [ "${1:-}" = "--remove" ]; then
+    copy="${2:?usage: scratch-copy --remove <copy>}"
+    if [ ! -f "$copy/$MARKER" ]; then
+        echo "refusing: $copy was not made by scratch-copy" >&2
+        exit 1
+    fi
+    # Unlink node_modules first so no recursive delete can follow it into the
+    # original repository's dependencies.
+    if [ -e "$copy/node_modules" ] || [ -L "$copy/node_modules" ]; then
+        if command -v cygpath >/dev/null 2>&1; then
+            MSYS2_ARG_CONV_EXCL='*' cmd /c rmdir "$(cygpath -w "$copy/node_modules")"
+        else
+            rm "$copy/node_modules"
+        fi
+    fi
+    rm -rf "$copy"
+    rmdir "$(dirname "$copy")" 2>/dev/null || true
+    exit 0
+fi
+
+src="$(cd "${1:?usage: scratch-copy <repo-dir>}" && pwd)"
+dest="$(mktemp -d)/$(basename "$src")"
+mkdir -p "$dest"
+
+tar -C "$src" \
+    --exclude=./.git --exclude=./.venv --exclude=./node_modules --exclude=./dist \
+    --exclude=./var --exclude=./data --exclude=./datasets --exclude=./models \
+    --exclude='*/__pycache__' --exclude=./.pytest_cache --exclude=./.ruff_cache \
+    -cf - . | tar -C "$dest" -xf -
+touch "$dest/$MARKER"
+
+if [ -d "$src/node_modules" ]; then
+    if command -v cygpath >/dev/null 2>&1; then
+        # A directory junction needs no admin rights or developer mode. The
+        # conversion guard stops Git Bash rewriting /J into a path.
+        MSYS2_ARG_CONV_EXCL='*' cmd /c mklink /J \
+            "$(cygpath -w "$dest/node_modules")" "$(cygpath -w "$src/node_modules")" >/dev/null
+    else
+        ln -s "$src/node_modules" "$dest/node_modules"
+    fi
+fi
+
+printf '%s\n' "$dest"

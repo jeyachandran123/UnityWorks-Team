@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# standup — git and contract state of the Vision AI pair, and unaddressed review
+# findings. Read-only: runs no tests, fetches nothing, changes nothing.
+
+set -uo pipefail
+. "$(dirname "$0")/locate-pair"
+
+section() { printf '\n## %s\n' "$1"; }
+
+for repo in "$BACKEND" "$FRONTEND"; do
+    name="$(basename "$repo")"
+    section "$name"
+    branch="$(git -C "$repo" branch --show-current)"
+    upstream="$(git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+    printf 'branch:   %s\n' "$branch"
+    printf 'head:     %s\n' "$(git -C "$repo" log -1 --format='%h %s (%cr)')"
+    if [ -n "$upstream" ]; then
+        read -r behind ahead < <(git -C "$repo" rev-list --left-right --count "$upstream...HEAD")
+        printf 'upstream: %s — ahead %s, behind %s (as of last fetch)\n' "$upstream" "$ahead" "$behind"
+    else
+        printf 'upstream: none — branch is not pushed\n'
+    fi
+    if git -C "$repo" rev-parse --verify -q origin/main >/dev/null; then
+        printf 'vs main:  %s commits not on origin/main\n' "$(git -C "$repo" rev-list --count origin/main..HEAD)"
+    fi
+    changes="$(git -C "$repo" status --short)"
+    if [ -n "$changes" ]; then
+        printf 'uncommitted (%s):\n' "$(printf '%s\n' "$changes" | wc -l | tr -d ' ')"
+        printf '%s\n' "$changes" | head -25 | sed 's/^/  /'
+    else
+        printf 'uncommitted: none\n'
+    fi
+    stashes="$(git -C "$repo" stash list | wc -l | tr -d ' ')"
+    [ "$stashes" -gt 0 ] && printf 'stashes:  %s\n' "$stashes"
+
+    latest="$(ls -d "$repo"/docs/reviews/*/ 2>/dev/null | sort | tail -1)"
+    if [ -n "$latest" ]; then
+        printf 'latest review: %s\n' "${latest#"$repo"/}"
+        if [ -f "$latest/00-triage.md" ]; then
+            grep -m1 -A1 '^# Verdict' "$latest/00-triage.md" | tail -1 | sed 's/^/  verdict: /'
+        else
+            printf '  no 00-triage.md — reports are untriaged: %s\n' "$(ls "$latest" | tr '\n' ' ')"
+        fi
+        blockers="$(grep -h -c '^\- \*\*Severity:\*\* blocker' "$latest"/*.md 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+        printf '  blocker findings filed: %s\n' "$blockers"
+    else
+        printf 'latest review: none\n'
+    fi
+done
+
+section "contract"
+pin="$(tr -d '[:space:]' < "$FRONTEND/.github/backend-schema.sha" 2>/dev/null || true)"
+backend_head="$(git -C "$BACKEND" rev-parse HEAD)"
+if [ -z "$pin" ]; then
+    printf 'pin: missing (.github/backend-schema.sha)\n'
+else
+    printf 'pin:          %s\n' "$(git -C "$BACKEND" log -1 --format='%h %s' "$pin" 2>/dev/null || echo "$pin (not in local backend history)")"
+    printf 'backend HEAD: %s\n' "$(git -C "$BACKEND" log -1 --format='%h %s')"
+    if [ "$pin" = "$backend_head" ]; then
+        printf 'pin equals backend HEAD\n'
+    elif git -C "$BACKEND" diff --quiet "$pin" HEAD -- docs/api/openapi.json 2>/dev/null; then
+        printf 'pin differs from HEAD, but docs/api/openapi.json is identical — contract unchanged\n'
+    else
+        printf 'SCHEMA MOVED since the pin — frontend CI will regenerate from an older schema. Run /contract.\n'
+    fi
+    if git -C "$BACKEND" branch -r --contains "$pin" 2>/dev/null | grep -q .; then
+        printf 'pin is on a remote branch\n'
+    else
+        printf 'PIN IS NOT ON ANY REMOTE BRANCH — frontend CI cannot fetch it\n'
+    fi
+fi
+if ! git -C "$BACKEND" diff --quiet -- docs/api/openapi.json || ! git -C "$FRONTEND" diff --quiet -- src/shared/types/openapi.ts; then
+    printf 'uncommitted contract files present\n'
+fi

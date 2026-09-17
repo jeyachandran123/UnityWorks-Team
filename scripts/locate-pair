@@ -1,0 +1,35 @@
+# Sourced. Sets PAIR to the directory holding both Vision AI repositories, or
+# exits 1 with a message. Looks at the working directory, its parent, and a
+# Unityworks_vision_AI/ child, so a command works whether Claude Code was
+# launched in the container directory, inside either repo, or one level above.
+
+PAIR=""
+for candidate in "$PWD" "$(dirname "$PWD")" "$PWD/Unityworks_vision_AI" "$(dirname "$PWD")/Unityworks_vision_AI"; do
+    if [ -d "$candidate/unityworks-vision-ai-backend" ] && [ -d "$candidate/unityworks-vision-ai-frontend" ]; then
+        PAIR="$(cd "$candidate" && pwd)"
+        break
+    fi
+done
+
+if [ -z "$PAIR" ]; then
+    echo "Cannot find unityworks-vision-ai-backend and unityworks-vision-ai-frontend side by side near $PWD." >&2
+    exit 1
+fi
+
+BACKEND="$PAIR/unityworks-vision-ai-backend"
+FRONTEND="$PAIR/unityworks-vision-ai-frontend"
+
+backend_python() {
+    if [ -x "$BACKEND/.venv/Scripts/python.exe" ]; then
+        printf '%s' "$BACKEND/.venv/Scripts/python.exe"
+    elif [ -x "$BACKEND/.venv/bin/python" ]; then
+        printf '%s' "$BACKEND/.venv/bin/python"
+    else
+        command -v python3 || command -v python
+    fi
+}
+
+# to_native <path> — a path node/python on Windows can open.
+to_native() {
+    if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}

@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# PreToolUse: keep unityworks-team specialist agents advisory.
+#
+# The roster's agents carry no Edit tool, but they need Write (to file their
+# report) and Bash (a QA engineer that cannot run pytest is useless), and both
+# can mutate. A permission deny-list in settings.json cannot express "only for
+# these agents" — it would bind the main session too. This hook can: Claude Code
+# names the subagent in the payload, so the restriction reaches the roster and
+# nothing else.
+#
+# For a unityworks-team agent:
+#   - Write/Edit/MultiEdit/NotebookEdit only under docs/reviews/ (or a temp dir,
+#     where scratch-copy mutations live)
+#   - no git history or working-tree mutation, no dependency installs, no
+#     migrations applied
+# Any other caller: exit 0 immediately.
+
+set -uo pipefail
+
+payload="$(cat)"
+. "$(dirname "$0")/lib/common"
+
+agent="$(json_field agent_type)"
+case "$agent" in
+    unityworks-team:*) ;;
+    security-engineer|architecture-auditor|vision-specialist|backend-engineer|frontend-engineer) ;;
+    ux-architect|devops-engineer|qa-engineer|product-analyst|release-scribe|tech-lead) ;;
+    *) exit 0 ;;
+esac
+
+block() {
+    printf 'BLOCKED for %s: %s\n\nSpecialists advise; the main session implements. %s\n' "$agent" "$1" "$2" >&2
+    exit 2
+}
+
+tool="$(json_field tool_name)"
+case "$tool" in
+    Write|Edit|MultiEdit|NotebookEdit)
+        path="$(normalise_path "$(json_field file_path)")"
+        [ -n "$path" ] || path="$(normalise_path "$(json_field notebook_path)")"
+        case "$path" in
+            */docs/reviews/*) exit 0 ;;
+        esac
+        # Inside a copy made by skills/invariant-audit/scratch-copy — where
+        # mutation testing belongs — identified by its marker, not by "temp".
+        dir="$(dirname "$path")"
+        while [ -n "$dir" ] && [ "$dir" != "/" ] && [ "$dir" != "." ]; do
+            [ -f "$dir/.unityworks-scratch-copy" ] && exit 0
+            parent="$(dirname "$dir")"; [ "$parent" = "$dir" ] && break; dir="$parent"
+        done
+        block "writing $path" \
+"Reports go to docs/reviews/<date>/<role>.md. Put the proposed change in the
+report's Recommendation instead."
+        ;;
+    Bash|PowerShell)
+        cmd="$(json_field command)"
+        case "$cmd" in
+            *"git commit"*|*"git push"*|*"git checkout"*|*"git switch"*|*"git reset"*|*"git restore"*|\
+            *"git clean"*|*"git stash"*|*"git merge"*|*"git rebase"*|*"git cherry-pick"*|*"git am "*|\
+            *"git apply"*|*"git rm "*|*"git mv "*|*"git branch -d"*|*"git branch -D"*|*"git tag "*|\
+            *"git worktree add"*|*"git worktree remove"*)
+                block "git state change: $cmd" \
+"Read history with git log/show/diff/status. For mutation testing use the
+invariant-audit scratch-copy helper, which needs no git."
+                ;;
+            *"npm install"*|*"npm i "*|*"npm ci"*|*"npm uninstall"*|*"npm update"*|*"pip install"*|*"pip uninstall"*|*"uv pip"*|*"poetry add"*)
+                block "dependency change: $cmd" "Report the missing dependency instead."
+                ;;
+            *"alembic upgrade"*|*"alembic downgrade"*|*"alembic stamp"*|*"alembic revision"*)
+                case "$cmd" in
+                    *DATABASE_URL_OVERRIDE=*sqlite*) exit 0 ;;   # disposable check per db-migration
+                esac
+                block "migration against a configured database: $cmd" \
+"Use a disposable SQLite file via DATABASE_URL_OVERRIDE, as the db-migration skill shows."
+                ;;
+        esac
+        ;;
+esac
+
+exit 0
