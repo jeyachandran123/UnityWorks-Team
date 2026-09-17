@@ -301,6 +301,8 @@ expect_stdout "run-check runs a named check with related repositories in its env
 (cd "$API" && bash "$SCRIPTS/run-check" broken >/dev/null 2>&1); report "run-check fails when a check fails" 1 $?
 (cd "$API" && bash "$SCRIPTS/run-check" nosuch >/dev/null 2>&1); report "run-check rejects an unknown check name" 1 $?
 expect_stdout "run-check explains how to declare checks when there are none" "No checks declared" bash -c "cd '$PLAIN' && bash '$SCRIPTS/run-check'"
+(cd "$API" && bash "$SCRIPTS/standup" >/dev/null 2>&1); report "standup exits 0 when nothing is missing" 0 $?
+(cd "$PLAIN" && bash "$SCRIPTS/standup" >/dev/null 2>&1); report "standup exits 0 for an unconfigured repository" 0 $?
 expect_stdout "standup tells an unconfigured repository to run /team-init" "Run /team-init" bash -c "cd '$PLAIN' && bash '$SCRIPTS/standup'"
 expect_stdout "standup lists a configured repository's checks" "checks: ok broken " bash -c "cd '$API' && bash '$SCRIPTS/standup'"
 

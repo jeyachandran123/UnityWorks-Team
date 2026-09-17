@@ -71,3 +71,5 @@ if [ "$TEAM_CONFIGURED" = yes ]; then
 else
     printf 'NOT CONFIGURED — no .claude/team.conf. Run /team-init to set this project up.\n'
 fi
+
+exit 0
