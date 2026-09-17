@@ -1,35 +1,26 @@
 #!/usr/bin/env bash
-# PreToolUse: block edits to the migrated-verbatim trees.
+# PreToolUse: block edits to the migrated-verbatim trees of the Vision AI backend.
 #
 # vision_os/ is byte-identical to its source and compliance/ and tools/ are
 # excluded from lint for the same reason. A test proves the dependency arrow, but
 # no test proves you MEANT to edit here. This asks for that intent explicitly.
+#
+# Scoped to the repository that holds both vision_os/ and
+# scripts/export_openapi.py, so an unrelated project's tools/ is never touched.
 
 set -uo pipefail
 
 payload="$(cat)"
+. "$(dirname "$0")/lib/common"
 
-path="$(printf '%s' "$payload" \
-    | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
-    | head -1)"
+path="$(normalise_path "$(json_field file_path)")"
+[ -n "$path" ] || exit 0
 
-# Claude Code on Windows supplies native backslash absolute paths
-# (C:\Users\...\vision_os\...). $path was extracted from raw JSON without
-# unescaping, so each real backslash is still doubled on the wire
-# (C:\\Users\\...). Collapse each doubled pair to a single "/" — a naive
-# single-backslash swap would instead leave doubled slashes (src//shared)
-# that no longer match a multi-segment literal like */src/shared/*. The
-# case patterns below are written with forward slashes, so without this
-# the guard silently returns 0 on Windows.
-path="${path//\\\\//}"
+root="$(repo_root_of "$path")" || exit 0
+is_vision_backend "$root" || exit 0
 
-# tests/vision_os and tests/compliance are ordinary test files, not the platform.
-case "$path" in
-    */tests/*) exit 0 ;;
-esac
-
-case "$path" in
-    */vision_os/*|*/compliance/*|*/tools/*)
+case "${path#"$root"/}" in
+    vision_os/*|compliance/*|tools/*)
         cat >&2 <<MSG
 BLOCKED: $path is inside a migrated-verbatim tree.
 
@@ -37,8 +28,8 @@ vision_os/, compliance/ and tools/ are moved unchanged from their source and are
 excluded from lint for that reason. Editing here breaks the migration invariant
 asserted by tests/app/test_migration.py.
 
-If the change is genuinely required, say so explicitly and it can be made
-deliberately rather than incidentally.
+If the change is genuinely required, stop and ask the user to confirm it
+explicitly, so it is made deliberately rather than incidentally.
 MSG
         exit 2
         ;;

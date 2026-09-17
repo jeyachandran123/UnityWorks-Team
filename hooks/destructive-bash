@@ -4,13 +4,12 @@
 set -uo pipefail
 
 payload="$(cat)"
+. "$(dirname "$0")/lib/common"
 
-command_text="$(printf '%s' "$payload" \
-    | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\(\([^"\\]\|\\.\)*\)".*/\1/p' \
-    | head -1)"
+command_text="$(json_field command)"
 
 block() {
-    printf 'BLOCKED: %s\n\n%s\n' "$1" "$2" >&2
+    printf 'BLOCKED: %s\n\n%s\n\nIf this is genuinely intended, ask the user to run it themselves.\n' "$1" "$2" >&2
     exit 2
 }
 
@@ -20,15 +19,19 @@ case "$command_text" in
 "Downgrades drop columns and partitions. Restore from a backup or write a new
 forward migration instead."
         ;;
-    *"push --force"*|*"push -f"*|*"push --force-with-lease"*)
+    *"push --force"*|*"push -f"*)
         block "force push" \
-"Both repositories are on shared feature branches with unpushed work. Rewriting
-published history loses commits that exist nowhere else."
+"Both repositories work on shared feature branches. Rewriting published history
+loses commits that may exist nowhere else."
         ;;
-    *"git checkout -- ."*|*"git checkout ."*|*"git restore ."*|*"git reset --hard"*)
+    *"git checkout -- ."*|*"git checkout ."*|*"git restore ."*|*"git reset --hard"*|*"git clean -f"*)
         block "discarding the working tree" \
-"The backend currently holds 8 uncommitted modified files on the security
-surface. This command deletes them with no recovery path."
+"Uncommitted work has no recovery path once this runs. Commit or stash it first."
+        ;;
+    *"compose down"*)
+        block "docker compose down" \
+"It recreates the database container and has already destroyed a database in
+this workspace once. Use restart, stop or up -d."
         ;;
 esac
 

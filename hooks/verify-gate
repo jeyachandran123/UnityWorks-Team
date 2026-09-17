@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Stop: refuse to finish once when this session edited gated code in a Vision AI
+# repository and never ran that repository's gate after the last such edit.
+#
+# "Verify before claiming done" is otherwise a rule followed by judgment, and
+# judgment is what fails at the end of a long session. This mechanises it.
+#
+# It reads the session transcript rather than git status, so work that was
+# already uncommitted when the session started does not trip it — only edits
+# this session made. It blocks at most once: when stop_hook_active is true the
+# assistant has already been told, and a second refusal would loop.
+
+set -uo pipefail
+
+payload="$(cat)"
+. "$(dirname "$0")/lib/common"
+
+case "$payload" in
+    *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exit 0 ;;
+esac
+
+transcript="$(normalise_path "$(json_field transcript_path)")"
+[ -f "$transcript" ] || exit 0
+
+# line-number<TAB>file_path for every Edit/Write/MultiEdit tool call.
+edits="$(grep -n -o '"name":"\(Edit\|Write\|MultiEdit\)","input":{"file_path":"[^"]*"' "$transcript" \
+    | sed 's/^\([0-9]*\):.*"file_path":"\([^"]*\)"$/\1\t\2/')"
+[ -n "$edits" ] || exit 0
+
+# last_command_line <text> — last transcript line whose Bash or PowerShell
+# command contains <text>. The command body may hold escaped quotes (\"), so it
+# is matched as a run of non-quote characters or backslash escapes.
+last_command_line() {
+    grep -n -o '"name":"\(Bash\|PowerShell\)","input":{"command":"\([^"\\]\|\\.\)*'"$1" "$transcript" \
+        | tail -1 | cut -d: -f1
+}
+
+messages=""
+backend_last=0; backend_root=""; api_touched=0
+frontend_last=0; frontend_root=""
+
+while IFS="$(printf '\t')" read -r line raw; do
+    path="$(normalise_path "$raw")"
+    root="$(repo_root_of "$path")" || continue
+    rel="${path#"$root"/}"
+    if is_vision_backend "$root"; then
+        case "$rel" in
+            app/*|tests/*|migrations/*|scripts/*)
+                backend_last="$line"; backend_root="$root"
+                case "$rel" in app/api/*) api_touched=1 ;; esac
+                ;;
+        esac
+    elif is_vision_frontend "$root"; then
+        case "$rel" in
+            src/*|tests/*|scripts/*|vite.config.ts|eslint.config.js|tsconfig*.json|package.json)
+                frontend_last="$line"; frontend_root="$root" ;;
+        esac
+    fi
+done <<EOF
+$edits
+EOF
+
+if [ "$backend_last" -gt 0 ]; then
+    missing=""
+    for tool in pytest "ruff check" "black"; do
+        ran="$(last_command_line "$tool")"
+        if [ -z "$ran" ] || [ "$ran" -lt "$backend_last" ]; then
+            missing="$missing $tool;"
+        fi
+    done
+    if [ "$api_touched" -eq 1 ]; then
+        ran="$(last_command_line "export_openapi")"
+        if [ -z "$ran" ] || [ "$ran" -lt "$backend_last" ]; then
+            missing="$missing export_openapi.py --check;"
+        fi
+    fi
+    if [ -n "$missing" ]; then
+        messages="${messages}Backend ($backend_root) was edited but these never ran after the last edit:${missing}
+    ruff check app tests && black --check app tests && pytest && python scripts/export_openapi.py --check
+"
+    fi
+fi
+
+if [ "$frontend_last" -gt 0 ]; then
+    ran="$(last_command_line "npm run verify")"
+    if [ -z "$ran" ] || [ "$ran" -lt "$frontend_last" ]; then
+        messages="${messages}Frontend ($frontend_root) was edited but npm run verify never ran after the last edit.
+"
+    fi
+fi
+
+[ -n "$messages" ] || exit 0
+
+cat >&2 <<MSG
+NOT DONE YET — the gate has not run on this session's changes.
+
+${messages}
+Run the gate and report its real output. If it genuinely cannot run here, say
+so plainly and say why, instead of claiming the work is complete.
+MSG
+exit 2

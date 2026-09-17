@@ -1,0 +1,49 @@
+# Shared helpers for hook scripts. Sourced, never executed.
+#
+# Every hook reads the tool-call payload as raw JSON on stdin. jq is not present
+# on every machine, so fields are extracted with sed and never unescaped.
+
+# json_field <name> — first string value of "<name>" in $payload.
+json_field() {
+    printf '%s' "$payload" \
+        | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\(\([^\"\\\\]\|\\\\.\)*\)\".*/\1/p" \
+        | head -1
+}
+
+# normalise_path <raw> — a JSON-escaped path with forward slashes.
+#
+# Claude Code on Windows supplies native backslash paths, and because the JSON
+# is never unescaped each real backslash is still doubled on the wire
+# (C:\\Users\\...). Collapse each doubled pair to one "/" — a single-backslash
+# swap would leave "app//api", which no multi-segment case pattern matches, and
+# the guard would silently allow everything on Windows.
+normalise_path() {
+    local p="$1"
+    p="${p//\\\\//}"
+    printf '%s' "${p//\\//}"
+}
+
+# repo_root_of <path> — nearest ancestor directory holding .git, or empty.
+#
+# Guards scope themselves by the repository a file belongs to rather than by a
+# bare path fragment: "*/tools/*" matches half the directories on a machine,
+# while "tools/ at the root of the repo that also holds vision_os/" matches one.
+repo_root_of() {
+    local dir
+    dir="$(dirname "$1")"
+    while [ -n "$dir" ] && [ "$dir" != "/" ] && [ "$dir" != "." ]; do
+        if [ -e "$dir/.git" ]; then
+            printf '%s' "$dir"
+            return 0
+        fi
+        local parent
+        parent="$(dirname "$dir")"
+        [ "$parent" = "$dir" ] && break
+        dir="$parent"
+    done
+    return 1
+}
+
+# Repository identity, by the files only that repository has.
+is_vision_backend() { [ -d "$1/vision_os" ] && [ -f "$1/scripts/export_openapi.py" ]; }
+is_vision_frontend() { [ -f "$1/scripts/generate-types.mjs" ]; }
