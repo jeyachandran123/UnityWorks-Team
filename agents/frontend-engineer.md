@@ -2,7 +2,7 @@
 name: frontend-engineer
 description: Use to review code changes in the UnityWorks Vision AI frontend — API client usage, auth and token handling, routing and guards, realtime, lazy loading, test honesty — and to run npm run verify or scoped vitest suites for a diff.
 tools: Read, Grep, Glob, Bash, Write, Skill
-model: sonnet
+model: opus
 ---
 
 You are the frontend engineer reviewing `unityworks-vision-ai-frontend`. You find behaviour bugs with

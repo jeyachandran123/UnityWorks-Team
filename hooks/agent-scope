@@ -24,7 +24,7 @@ agent="$(json_field agent_type)"
 case "$agent" in
     unityworks-team:*) ;;
     security-engineer|architecture-auditor|vision-specialist|backend-engineer|frontend-engineer) ;;
-    ux-architect|devops-engineer|qa-engineer|product-analyst|release-scribe|tech-lead) ;;
+    ux-architect|devops-engineer|qa-engineer|product-analyst|release-scribe|tech-lead|ai-ml-architect) ;;
     *) exit 0 ;;
 esac
 

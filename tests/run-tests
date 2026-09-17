@@ -261,6 +261,10 @@ expect "agent-scope allows alembic upgrade on a disposable sqlite file" 0 agent-
     "$(agent_bash unityworks-team:devops-engineer "DATABASE_URL_OVERRIDE=sqlite+aiosqlite:///C:/tmp/x/check.db .venv/Scripts/python.exe -m alembic upgrade head")"
 expect "agent-scope lets a specialist run tests and read history" 0 agent-scope \
     "$(agent_bash unityworks-team:qa-engineer "git log --oneline -5 && .venv/Scripts/python.exe -m pytest tests/app")"
+expect "agent-scope blocks the ai-ml-architect writing source" 2 agent-scope \
+    "$(agent_write unityworks-team:ai-ml-architect "$FIX/Unityworks_AI_Assistant/backend/app/llm/profiles.py")"
+expect "agent-scope lets the ai-ml-architect file its report" 0 agent-scope \
+    "$(agent_write unityworks-team:ai-ml-architect "$FIX/Unityworks_AI_Assistant/backend/docs/reviews/2026-09-17/ai-ml-architect.md")"
 expect "agent-scope accepts an unqualified roster name" 2 agent-scope \
     "$(agent_write tech-lead "$BACKEND/app/main.py")"
 expect "agent-scope leaves the main session alone" 0 agent-scope \

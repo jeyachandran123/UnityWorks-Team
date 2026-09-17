@@ -37,7 +37,7 @@ Claude Code — installed plugins run from a cached copy.
 
 `security-engineer` · `architecture-auditor` · `vision-specialist` · `backend-engineer` ·
 `frontend-engineer` · `ux-architect` · `devops-engineer` · `qa-engineer` · `product-analyst` ·
-`release-scribe` · `tech-lead`
+`release-scribe` · `ai-ml-architect` (AI Assistant backend) · `tech-lead`
 
 They advise; they never change code. Each files `docs/reviews/<date>/<role>.md` in the repo it
 reviewed; `tech-lead` reads only those reports and writes `00-triage.md`.
@@ -49,6 +49,7 @@ testing), `evidence-report`, `prod-readiness`.
 Backend `.claude/skills/`: `backend-verify`, `api-route-change`, `vision-os-boundaries`,
 `db-migration`, `vision-eval`.
 Frontend `.claude/skills/`: `frontend-verify`, `new-route`, `four-states`, `design-system`.
+AI Assistant backend `.claude/skills/`: `unityworks-ai-ml` (used by `ai-ml-architect`).
 
 ### Hooks (always on)
 

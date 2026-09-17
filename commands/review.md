@@ -8,11 +8,14 @@ Arguments: $ARGUMENTS
 
 Roles: `security-engineer`, `architecture-auditor`, `vision-specialist`, `backend-engineer`,
 `frontend-engineer`, `ux-architect`, `devops-engineer`, `qa-engineer`, `product-analyst`,
-`release-scribe`. (`tech-lead` triages reports — use `/harden` for that.)
+`release-scribe`, `ai-ml-architect`. (`tech-lead` triages reports — use `/harden` for that.)
 
 1. The first word of the arguments is the role. If it is missing or not in the list, reply with the
    list and stop.
-2. Locate the pair and the diff — run from the current directory:
+2. **If the role is `ai-ml-architect`**, the repository is the AI Assistant backend — the current
+   directory if it contains `app/llm/`, otherwise `Unityworks_AI_Assistant/backend` beside or above it.
+   Run `git status --short` and `git diff --stat "$(git merge-base HEAD origin/main)"` there, and use
+   that repository alone in step 3. **Otherwise** locate the Vision pair and the diff:
    ```bash
    . "${CLAUDE_PLUGIN_ROOT}/scripts/locate-pair" && for r in "$BACKEND" "$FRONTEND"; do
      echo "== $r"; git -C "$r" status --short; git -C "$r" diff --stat "$(git -C "$r" merge-base HEAD origin/main)"; done

@@ -8,14 +8,16 @@ Arguments: $ARGUMENTS
 
 The first word is the role (`security-engineer`, `architecture-auditor`, `vision-specialist`,
 `backend-engineer`, `frontend-engineer`, `ux-architect`, `devops-engineer`, `qa-engineer`,
-`product-analyst`, `release-scribe`); the rest is the question. If either is missing, say what is
+`product-analyst`, `release-scribe`, `ai-ml-architect`); the rest is the question. If either is missing, say what is
 needed and stop.
 
-Dispatch one `unityworks-team:<role>` agent with this prompt, filling in the question:
+Dispatch one `unityworks-team:<role>` agent with this prompt, filling in the question. Replace
+`<REPOS>` with "the UnityWorks AI Assistant backend (`Unityworks_AI_Assistant/backend`, the current
+directory or beside/above it)" for `ai-ml-architect`, and otherwise with "the UnityWorks Vision AI
+repositories (`unityworks-vision-ai-backend`, `unityworks-vision-ai-frontend`, found beside or above
+the current directory)":
 
-> This is a brief, not a review. Answer one question for the UnityWorks Vision AI repositories
-> (`unityworks-vision-ai-backend`, `unityworks-vision-ai-frontend`, found beside or above the current
-> directory). **Do not write a report file.** Investigate only as far as the question needs. Answer in
+> This is a brief, not a review. Answer one question for <REPOS>. **Do not write a report file.** Investigate only as far as the question needs. Answer in
 > at most 250 words: the answer first, then the evidence — each claim with a `file:line` or a command
 > you ran and its output. If the question cannot be answered with evidence, say what would settle it.
 >
