@@ -12,16 +12,20 @@ Roles: `security-engineer`, `architecture-auditor`, `vision-specialist`, `backen
 
 1. The first word of the arguments is the role. If it is missing or not in the list, reply with the
    list and stop.
-2. **If the role is `ai-ml-architect`**, the repository is the AI Assistant backend — the current
-   directory if it contains `app/llm/`, otherwise `Unityworks_AI_Assistant/backend` beside or above it.
-   Run `git status --short` and `git diff --stat "$(git merge-base HEAD origin/main)"` there, and use
-   that repository alone in step 3. **Otherwise** locate the Vision pair and the diff:
-   ```bash
-   . "${CLAUDE_PLUGIN_ROOT}/scripts/locate-pair" && for r in "$BACKEND" "$FRONTEND"; do
-     echo "== $r"; git -C "$r" status --short; git -C "$r" diff --stat "$(git -C "$r" merge-base HEAD origin/main)"; done
-   ```
+2. Locate the repositories **by their contents, never by folder name**, and show the diff. If the
+   script exits non-zero, relay its message and stop — do not guess a path.
+   - Role `ai-ml-architect`:
+     ```bash
+     R="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/find-repo" ai-assistant-backend)" && echo "== $R" &&
+     git -C "$R" status --short && git -C "$R" diff --stat "$(git -C "$R" merge-base HEAD origin/main)"
+     ```
+   - Any other role:
+     ```bash
+     . "${CLAUDE_PLUGIN_ROOT}/scripts/locate-pair" && for r in "$BACKEND" "$FRONTEND"; do
+       echo "== $r"; git -C "$r" status --short; git -C "$r" diff --stat "$(git -C "$r" merge-base HEAD origin/main)"; done
+     ```
 3. Dispatch **one** `unityworks-team:<role>` agent. Its prompt contains, and only contains:
-   - the absolute paths of the backend and frontend repositories;
+   - the absolute repository path(s) printed by step 2;
    - the scope: the rest of the arguments if given, otherwise "the uncommitted changes plus the commits
      on this branch not on origin/main", with the file list from step 2;
    - today's date (`date +%F`) for the report directory;

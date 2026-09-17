@@ -337,6 +337,48 @@ fi
 T="$(tx launcher "$(t_edit "$BACKEND/app/domain/audit.py")")"
 expect_via_launcher "verify-gate blocks through run-hook.cmd" 2 verify-gate "$(stop_payload "$T")"
 
+# ---- find-repo / locate-pair ----------------------------------------------
+#
+# Repositories are found by what is inside them. The fixtures deliberately use
+# folder names that share nothing with the real ones.
+
+SCRIPTS="$(cd "$(dirname "$0")/../scripts" && pwd)"
+W="$FIX/renamed"
+mkdir -p "$W/work/be/.git" "$W/work/be/vision_os" "$W/work/be/scripts" \
+         "$W/work/fe/.git" "$W/work/fe/scripts" "$W/work/fe/src/shared/types" "$W/work/fe/src/deep" \
+         "$W/elsewhere/assist/.git" "$W/elsewhere/assist/app/llm" "$W/elsewhere/assist/app/cognitive_integration"
+touch "$W/work/be/scripts/export_openapi.py" "$W/work/fe/scripts/generate-types.mjs" \
+      "$W/elsewhere/assist/app/llm/profiles.py"
+
+# expect_found <name> <expected-path-or-empty> <kind> <start-dir>
+expect_found() {
+    local out rc
+    out="$(bash "$SCRIPTS/find-repo" "$3" "$4" 2>/dev/null)"; rc=$?
+    if [ -z "$2" ]; then
+        report "$1" 1 "$rc"
+    elif [ "$rc" -eq 0 ] && [ "$out" = "$2" ]; then
+        report "$1" 0 0
+    else
+        printf 'FAIL %s (exit %s, got "%s", expected "%s")\n' "$1" "$rc" "$out" "$2"; fail=$((fail + 1))
+    fi
+}
+
+expect_found "find-repo finds a renamed backend from deep inside the frontend" "$W/work/be" vision-backend "$W/work/fe/src/deep"
+expect_found "find-repo finds a renamed frontend from the folder above it" "$W/work/fe" vision-frontend "$W/work"
+expect_found "find-repo finds the assistant backend from inside itself" "$W/elsewhere/assist" ai-assistant-backend "$W/elsewhere/assist/app/llm"
+expect_found "find-repo reports nothing when no repository matches" "" ai-assistant-backend "$FIX/other-project"
+
+for twin in one two; do mkdir -p "$W/twins/$twin/.git" "$W/twins/$twin/vision_os" "$W/twins/$twin/scripts"; touch "$W/twins/$twin/scripts/export_openapi.py"; done
+bash "$SCRIPTS/find-repo" vision-backend "$W/twins" >/dev/null 2>&1
+report "find-repo refuses to choose between two equally near backends" 2 $?
+expect_found "find-repo prefers the repository it is inside" "$BACKEND" vision-backend "$BACKEND/vision_os"
+
+out="$(cd "$W/work/fe/src/deep" && bash "$SCRIPTS/locate-pair" --print 2>/dev/null)"
+case "$out" in
+    *"BACKEND=$W/work/be"*"FRONTEND=$W/work/fe"*) report "locate-pair resolves a renamed pair by contents" 0 0 ;;
+    *) printf 'FAIL locate-pair resolves a renamed pair by contents (got: %s)\n' "$out"; fail=$((fail + 1)) ;;
+esac
+
 # ---------------------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

@@ -20,22 +20,30 @@ both gates pass**. No test inside either repo can see the seam; only this proced
 
 ## Procedure
 
-Run from `Unityworks_vision_AI/`. On this machine bare `python` is not on PATH — use the venv.
+First locate both repositories **by their contents** — this works whatever the folders are called
+and wherever they are. It sets `$BACKEND`, `$FRONTEND`, and `UWV_SCHEMA_PATH` pointing at the backend
+it found (the generator's own default assumes a sibling folder named `unityworks-vision-ai-backend`):
+
+```bash
+eval "$(bash "<this skill's base directory>/../../scripts/locate-pair" --print)" || echo "repositories not found — stop"
+```
+
+On the main workstation bare `python` is not on PATH — use the backend's venv.
 
 ```bash
 # 1. Backend: re-export and confirm
-cd unityworks-vision-ai-backend
+cd "$BACKEND"
 .venv/Scripts/python.exe scripts/export_openapi.py
 .venv/Scripts/python.exe scripts/export_openapi.py --check     # must now pass
 
-# 2. Frontend: regenerate from the sibling export
-cd ../unityworks-vision-ai-frontend
+# 2. Frontend: regenerate from that export
+cd "$FRONTEND"
 npm run types:generate
 npm run verify          # types:check → typecheck → lint → test → build
 
 # 3. Look at what actually moved
-git -C ../unityworks-vision-ai-backend diff --stat docs/api/openapi.json
-git diff --stat src/shared/types/openapi.ts
+git -C "$BACKEND" diff --stat docs/api/openapi.json
+git -C "$FRONTEND" diff --stat src/shared/types/openapi.ts
 ```
 
 Then fix every TypeScript error `typecheck` reports **in the consuming code** (`src/shared/api/*.ts`,
@@ -57,10 +65,10 @@ using the SHA in `.github/backend-schema.sha`, and points the generator at it vi
 Reproduce frontend CI exactly before bumping anything:
 
 ```bash
-SHA="$(tr -d '[:space:]' < .github/backend-schema.sha)"
+SHA="$(tr -d '[:space:]' < "$FRONTEND/.github/backend-schema.sha")"
 F="$(mktemp -d)/schema.json"
-git -C ../unityworks-vision-ai-backend show "$SHA:docs/api/openapi.json" > "$F"
-UWV_SCHEMA_PATH="$(cygpath -w "$F" 2>/dev/null || echo "$F")" npm run types:check   # node on Windows cannot read /tmp paths
+git -C "$BACKEND" show "$SHA:docs/api/openapi.json" > "$F"
+cd "$FRONTEND" && UWV_SCHEMA_PATH="$(cygpath -w "$F" 2>/dev/null || echo "$F")" npm run types:check   # node on Windows cannot read /tmp paths
 ```
 
 Exit 1 with "openapi.ts is out of date" means the pin is stale. Repeat with `HEAD` in place of

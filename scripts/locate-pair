@@ -1,23 +1,26 @@
-# Sourced. Sets PAIR to the directory holding both Vision AI repositories, or
-# exits 1 with a message. Looks at the working directory, its parent, and a
-# Unityworks_vision_AI/ child, so a command works whether Claude Code was
-# launched in the container directory, inside either repo, or one level above.
+# Sourced. Sets BACKEND and FRONTEND to the Vision AI repositories, found by
+# their contents (scripts/find-repo), never by folder name — renaming or moving
+# either checkout does not break anything that sources this.
+#
+#   . locate-pair            set the variables (exit 1 with a message if not found)
+#   bash locate-pair --print print "export BACKEND=… FRONTEND=…" for eval, e.g. in a skill:
+#                            eval "$(bash <plugin>/scripts/locate-pair --print)"
 
-PAIR=""
-for candidate in "$PWD" "$(dirname "$PWD")" "$PWD/Unityworks_vision_AI" "$(dirname "$PWD")/Unityworks_vision_AI"; do
-    if [ -d "$candidate/unityworks-vision-ai-backend" ] && [ -d "$candidate/unityworks-vision-ai-frontend" ]; then
-        PAIR="$(cd "$candidate" && pwd)"
-        break
-    fi
-done
+# to_native <path> — a path node/python on Windows can open.
+to_native() {
+    if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}
 
-if [ -z "$PAIR" ]; then
-    echo "Cannot find unityworks-vision-ai-backend and unityworks-vision-ai-frontend side by side near $PWD." >&2
-    exit 1
-fi
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-BACKEND="$PAIR/unityworks-vision-ai-backend"
-FRONTEND="$PAIR/unityworks-vision-ai-frontend"
+BACKEND="$(bash "$_here/find-repo" vision-backend)" || exit 1
+FRONTEND="$(bash "$_here/find-repo" vision-frontend "$BACKEND/..")" \
+    || FRONTEND="$(bash "$_here/find-repo" vision-frontend)" || exit 1
+
+# The frontend generator's default schema path is the sibling folder
+# ../unityworks-vision-ai-backend. Pointing UWV_SCHEMA_PATH at the backend we
+# actually found keeps types:check correct whatever the folders are called.
+export UWV_SCHEMA_PATH="${UWV_SCHEMA_PATH:-$(to_native "$BACKEND/docs/api/openapi.json")}"
 
 backend_python() {
     if [ -x "$BACKEND/.venv/Scripts/python.exe" ]; then
@@ -29,7 +32,6 @@ backend_python() {
     fi
 }
 
-# to_native <path> — a path node/python on Windows can open.
-to_native() {
-    if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
-}
+if [ "${1:-}" = "--print" ]; then
+    printf 'export BACKEND=%q FRONTEND=%q UWV_SCHEMA_PATH=%q\n' "$BACKEND" "$FRONTEND" "$UWV_SCHEMA_PATH"
+fi

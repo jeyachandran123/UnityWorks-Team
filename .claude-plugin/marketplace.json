@@ -8,7 +8,7 @@
     {
       "name": "unityworks-team",
       "description": "Specialist review roster, procedures and gates for the UnityWorks Vision AI repositories",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "source": "./"
     }
   ]

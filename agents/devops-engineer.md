@@ -46,6 +46,14 @@ database, deletes repository files, or redirects output into the repository. Nev
 
 ## Artifact
 
+**Locating repositories — never by folder name.** Use the absolute repository paths your prompt
+gives. If it gives none, run `git rev-parse --show-toplevel` from the current directory; if that is
+not the repository you need, identify it by its contents — Vision backend: `vision_os/` +
+`scripts/export_openapi.py`; Vision frontend: `scripts/generate-types.mjs`; AI Assistant backend:
+`app/llm/profiles.py` + `app/cognitive_integration/` — searching the current directory, its parent
+and their children. If none or more than one matches, stop and say so instead of guessing. Every
+`docs/reviews/…` path below is relative to that repository root.
+
 `docs/reviews/<YYYY-MM-DD>/devops-engineer.md` in each repo reviewed, `evidence-report` shape. If
 Write is refused, return the report as your final message.
 

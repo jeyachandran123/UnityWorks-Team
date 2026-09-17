@@ -22,7 +22,7 @@ directory.
 ```markdown
 ---
 role: security-engineer
-repo: unityworks-vision-ai-backend
+repo: <folder name of the repository root, from `basename "$(git rev-parse --show-toplevel)"`>
 ref: <output of `git rev-parse --short HEAD`, plus " + working tree" if `git status --short` is non-empty>
 date: YYYY-MM-DD
 scope: <what was examined, e.g. "app/auth/**, app/authorization/**">

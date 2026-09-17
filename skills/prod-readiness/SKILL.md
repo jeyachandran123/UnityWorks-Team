@@ -11,8 +11,10 @@ A go/no-go for the Vision AI pair. Every item is a command with an observable re
 ticked from memory or from a previous session. Any **blocker** row that is red or could not be run
 makes the verdict *no-go*.
 
-Run from `Unityworks_vision_AI/`. Backend python is `.venv/Scripts/python.exe` (bare `python` is not
-on PATH on the main workstation). `gh` is not installed, so CI status is read from the GitHub web UI
+Locate both repositories by their contents first — folder names and locations don't matter:
+`eval "$(bash "<this skill's base directory>/../../scripts/locate-pair" --print)"` sets `$BACKEND` and
+`$FRONTEND` (stop if it fails). Run backend commands in `$BACKEND`, frontend commands in `$FRONTEND`.
+Backend python is `.venv/Scripts/python.exe` (bare `python` is not on PATH on the main workstation). `gh` is not installed, so CI status is read from the GitHub web UI
 or reported as *unverified* — never assumed green.
 
 ## 1. Gates (blocker)
@@ -31,10 +33,10 @@ editable install points at an old checkout path: `.venv/Scripts/python.exe -m pi
 ## 2. Source state (blocker)
 
 ```bash
-for r in unityworks-vision-ai-backend unityworks-vision-ai-frontend; do
-  git -C $r status --short; git -C $r status -sb | head -1; git -C $r log --oneline origin/main..HEAD | wc -l   # commits not yet on main (informational)
+for r in "$BACKEND" "$FRONTEND"; do
+  git -C "$r" status --short; git -C "$r" status -sb | head -1; git -C "$r" log --oneline origin/main..HEAD | wc -l   # commits not yet on main (informational)
 done
-cat unityworks-vision-ai-frontend/.github/backend-schema.sha; git -C unityworks-vision-ai-backend rev-parse HEAD
+cat "$FRONTEND/.github/backend-schema.sha"; git -C "$BACKEND" rev-parse HEAD
 ```
 
 - Working trees clean; branches not ahead of their remote (unpushed work is not releasable).

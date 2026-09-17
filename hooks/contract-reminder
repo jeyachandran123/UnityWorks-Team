@@ -22,8 +22,8 @@ case "${path#"$root"/}" in
 Route surface changed. The frontend is typed from the committed schema, so two
 commands must follow or the contract silently drifts:
 
-    python scripts/export_openapi.py
-    cd ../unityworks-vision-ai-frontend && npm run types:generate
+    python scripts/export_openapi.py      (in this repository)
+    npm run types:generate                (in the frontend repository)
 
 Procedure: unityworks-team:contract-sync
 MSG

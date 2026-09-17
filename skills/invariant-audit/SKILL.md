@@ -24,7 +24,8 @@ that passes against both the correct and the broken code is decoration.
    `node_modules` instead of copying it:
    ```bash
    SC="<this skill's base directory>/scratch-copy"
-   COPY="$(bash "$SC" unityworks-vision-ai-backend)"
+   eval "$(bash "<this skill's base directory>/../../scripts/locate-pair" --print)"   # $BACKEND, $FRONTEND by contents
+   COPY="$(bash "$SC" "$BACKEND")"
    echo 'kitchen_alert = True' >> "$COPY/vision_os/perception/__init__.py"   # mutate with Bash, not Edit
    ```
 4. **Run it red, in the copy.**

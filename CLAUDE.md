@@ -65,8 +65,12 @@ copy) and asserts with `expect` (exit code), `expect_output` (substring, or empt
 - Skill frontmatter `description` states **when to use**, never the procedure. Every command, path and
   test id a skill cites was run against the real repos; keep it that way when editing.
 - Agents carry no Edit tool, load skills by name, and end with the report path, verdict and counts.
-- Commands reference scripts as `${CLAUDE_PLUGIN_ROOT}/scripts/...`; `scripts/locate-pair` finds the
-  pair from the container dir, either repo, or one level above.
+- **Never locate a repository by folder name or fixed path.** `scripts/find-repo <kind>` identifies
+  one by its contents (and refuses to guess between two); `scripts/locate-pair` wraps it for the
+  Vision pair and exports `UWV_SCHEMA_PATH` so the frontend generator no longer needs a sibling named
+  `unityworks-vision-ai-backend`. Commands call them via `${CLAUDE_PLUGIN_ROOT}/scripts/...`; skills via
+  `<this skill's base directory>/../../scripts/...`; agents follow the "Locating repositories" rule
+  in their Artifact section. A new repository kind is a new case in `find-repo` plus a test.
 - On this machine bare `python` is not on PATH; the backend uses `.venv/Scripts/python.exe -m ...`.
 
 `.gitattributes` forces LF — required for the bash scripts and the polyglot launcher.
