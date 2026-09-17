@@ -86,6 +86,8 @@ Work in the repository root. The goal is a `team.conf` in which **every command 
    - `remind`: documented "after changing X, also do Y" steps.
 5. **Checks:** deterministic cross-cutting verifications the docs describe (schema drift, pinned
    versions). Write them as scripts under `.claude/team/checks/` that change no files, and run them.
+   Add `.claude/team/checks/** text eol=lf` to the repository's `.gitattributes` — on Windows
+   checkouts with `core.autocrlf` a CRLF bash script fails with `$'\r': command not found`.
 6. **Invariants:** if the docs declare invariants with tests, write `.claude/team/invariants.md`
    (invariant | test | realistic mutation). Verify each test id exists (collect or grep).
 7. **Role briefs:** for the plugin agents relevant to this repo, write short
