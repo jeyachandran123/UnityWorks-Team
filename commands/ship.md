@@ -1,34 +1,42 @@
 ---
-description: Go/no-go for releasing the Vision AI pair — both gates, contract, migrations, production config and docs drift
+description: Go/no-go for releasing this project — gates, declared checks, source state, and the project's release checklist
 allowed-tools: Bash, Read, Grep, Glob, Skill, Write
 ---
 
-Load the `unityworks-team:prod-readiness` skill and execute every section of it, in order, from the
-directory that holds both repositories. Notes: $ARGUMENTS
+Notes from the user: $ARGUMENTS
 
-Deterministic parts first, so a red gate is known before anything slow runs:
+Change nothing: no fixes, no version bumps, no commits.
+
+## 1. Deterministic first
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/standup"
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/contract-check"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/team-context"
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-check"
 ```
 
-Then the gates, backend and frontend in parallel as background commands (the backend suite takes
-minutes):
+## 2. Gates
 
-- backend: `ruff check app tests`, `black --check app tests`, `pytest` — with the repo's venv python
-- frontend: `npm run verify`
+Run the command (third part) of every distinct `gate` line in `.claude/team.conf` of this repository
+and of each related repository, from that repository's root. Run independent repositories in parallel
+as background commands. With no team.conf, use the lint/test/build commands the project's CI or
+`CLAUDE.md` declares, and say so.
 
-While they run, do the database and production-configuration sections (read-only: `alembic heads`,
-settings and docs — never `.env`, never a real database).
+## 3. Release checklist
 
-Rules:
+If `.claude/team.conf` names `release-skill = <name>`, load that project skill and execute every
+section of it while the gates run. Otherwise apply the generic minimum: working trees clean, branches
+pushed, one migration head if migrations exist, production configuration refuses unsafe defaults,
+documentation not contradicting the code.
+
+## Rules
 
 - Every row gets PASS, FAIL or **NOT RUN (reason)**. NOT RUN on a blocker row means no-go.
-- CI status is **unverified** unless shown (`gh` is not installed).
-- Invariants: a green full suite is recorded; only mutate-test (per `invariant-audit`) if the user
-  asked for a deep check in the notes above.
-- Change nothing. No fixes, no pin bump, no commits.
+- CI status is **unverified** unless shown.
+- Never read `.env` files, never touch a real database or deploy target.
 
-Write the verdict file per the skill, then reply with: **GO / GO AFTER BLOCKERS / NO-GO**, the table of
-rows, each blocker in one line with its fix command, and the report path.
+## Verdict
+
+Write it with `unityworks-team:evidence-report` as `<reviews>/<YYYY-MM-DD>/release.md` in this
+repository, then reply with **GO / GO AFTER BLOCKERS / NO-GO**, the table of rows, each blocker in one
+line with its fix command, and the report path.

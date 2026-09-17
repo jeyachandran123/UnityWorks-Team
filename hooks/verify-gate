@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Stop: refuse to finish once when this session edited gated code in a Vision AI
-# repository and never ran that repository's gate after the last such edit.
+# Stop: refuse to finish once when this session edited gated code and never ran
+# the project's gate for it afterwards.
+#
+#   gate = <watched path prefixes, space-separated> :: <text that proves it ran> :: <command to run>
+#
+# e.g. gate = src/ tests/ :: npm run verify :: npm run verify
 #
 # "Verify before claiming done" is otherwise a rule followed by judgment, and
-# judgment is what fails at the end of a long session. This mechanises it.
-#
-# It reads the session transcript rather than git status, so work that was
-# already uncommitted when the session started does not trip it — only edits
-# this session made. It blocks at most once: when stop_hook_active is true the
-# assistant has already been told, and a second refusal would loop.
+# judgment is what fails at the end of a long session. It reads the session
+# transcript rather than git status, so work already uncommitted when the
+# session started does not trip it. It blocks at most once: with
+# stop_hook_active the assistant has already been told, and blocking again
+# would loop.
 
 set -uo pipefail
 
@@ -35,67 +38,47 @@ last_command_line() {
         | tail -1 | cut -d: -f1
 }
 
-messages=""
-backend_last=0; backend_root=""; api_touched=0
-frontend_last=0; frontend_root=""
-
+# For every (repository, gate) pair touched: the last transcript line that
+# edited a watched path. Kept as "root<TAB>gate-index<TAB>line" records.
+records=""
 while IFS="$(printf '\t')" read -r line raw; do
     path="$(normalise_path "$raw")"
     root="$(repo_root_of "$path")" || continue
+    team_conf "$root" >/dev/null || continue
     rel="${path#"$root"/}"
-    if is_vision_backend "$root"; then
-        case "$rel" in
-            app/*|tests/*|migrations/*|scripts/*)
-                backend_last="$line"; backend_root="$root"
-                case "$rel" in app/api/*) api_touched=1 ;; esac
-                ;;
-        esac
-    elif is_vision_frontend "$root"; then
-        case "$rel" in
-            src/*|tests/*|scripts/*|vite.config.ts|eslint.config.js|tsconfig*.json|package.json)
-                frontend_last="$line"; frontend_root="$root" ;;
-        esac
-    fi
+    i=0
+    while IFS= read -r entry; do
+        i=$((i + 1))
+        # shellcheck disable=SC2046  # watched prefixes are space-separated by design
+        if under "$rel" $(part 1 "$entry"); then
+            records="$(printf '%s\n%s\t%s\t%s' "$records" "$root" "$i" "$line")"
+        fi
+    done < <(conf_values "$root" gate)
 done <<EOF
 $edits
 EOF
+[ -n "$records" ] || exit 0
 
-if [ "$backend_last" -gt 0 ]; then
-    missing=""
-    for tool in pytest "ruff check" "black"; do
-        ran="$(last_command_line "$tool")"
-        if [ -z "$ran" ] || [ "$ran" -lt "$backend_last" ]; then
-            missing="$missing $tool;"
-        fi
-    done
-    if [ "$api_touched" -eq 1 ]; then
-        ran="$(last_command_line "export_openapi")"
-        if [ -z "$ran" ] || [ "$ran" -lt "$backend_last" ]; then
-            missing="$missing export_openapi.py --check;"
-        fi
-    fi
-    if [ -n "$missing" ]; then
-        messages="${messages}Backend ($backend_root) was edited but these never ran after the last edit:${missing}
-    ruff check app tests && black --check app tests && pytest && python scripts/export_openapi.py --check
+messages=""
+while IFS="$(printf '\t')" read -r root index last_edit; do
+    [ -n "$root" ] || continue
+    entry="$(conf_values "$root" gate | sed -n "${index}p")"
+    evidence="$(part 2 "$entry")"
+    command="$(part 3 "$entry")"
+    ran="$(last_command_line "$evidence")"
+    if [ -z "$ran" ] || [ "$ran" -lt "$last_edit" ]; then
+        messages="${messages}  $(basename "$root"): ${command:-$evidence}
 "
     fi
-fi
-
-if [ "$frontend_last" -gt 0 ]; then
-    ran="$(last_command_line "npm run verify")"
-    if [ -z "$ran" ] || [ "$ran" -lt "$frontend_last" ]; then
-        messages="${messages}Frontend ($frontend_root) was edited but npm run verify never ran after the last edit.
-"
-    fi
-fi
+done < <(printf '%s\n' "$records" | sort -t "$(printf '\t')" -k1,1 -k2,2n -k3,3nr | sort -u -t "$(printf '\t')" -k1,1 -k2,2)
 
 [ -n "$messages" ] || exit 0
 
 cat >&2 <<MSG
-NOT DONE YET — the gate has not run on this session's changes.
+NOT DONE YET — this session edited gated code, and these gates never ran after the last edit:
 
 ${messages}
-Run the gate and report its real output. If it genuinely cannot run here, say
-so plainly and say why, instead of claiming the work is complete.
+Run them and report their real output. If one genuinely cannot run here, say so
+plainly and say why, instead of claiming the work is complete.
 MSG
 exit 2

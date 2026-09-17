@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # PreToolUse: block commands whose damage cannot be undone by a later test run.
+#
+# Built in (true in any git repository): force push, discarding the working tree.
+# Per project, in .claude/team.conf of the repository the command runs in:
+#
+#   block = <command substring> :: <why, and what to do instead>
 
 set -uo pipefail
 
@@ -7,6 +12,7 @@ payload="$(cat)"
 . "$(dirname "$0")/lib/common"
 
 command_text="$(json_field command)"
+[ -n "$command_text" ] || exit 0
 
 block() {
     printf 'BLOCKED: %s\n\n%s\n\nIf this is genuinely intended, ask the user to run it themselves.\n' "$1" "$2" >&2
@@ -14,25 +20,26 @@ block() {
 }
 
 case "$command_text" in
-    *"alembic downgrade"*)
-        block "alembic downgrade" \
-"Downgrades drop columns and partitions. Restore from a backup or write a new
-forward migration instead."
-        ;;
     *"push --force"*|*"push -f"*)
         block "force push" \
-"Both repositories work on shared feature branches. Rewriting published history
-loses commits that may exist nowhere else."
+"Rewriting published history loses commits that may exist nowhere else."
         ;;
     *"git checkout -- ."*|*"git checkout ."*|*"git restore ."*|*"git reset --hard"*|*"git clean -f"*)
         block "discarding the working tree" \
 "Uncommitted work has no recovery path once this runs. Commit or stash it first."
         ;;
-    *"compose down"*)
-        block "docker compose down" \
-"It recreates the database container and has already destroyed a database in
-this workspace once. Use restart, stop or up -d."
-        ;;
 esac
+
+cwd="$(normalise_path "$(json_field cwd)")"
+[ -n "$cwd" ] || cwd="$PWD"
+root="$(repo_root_of "$cwd")" || exit 0
+
+while IFS= read -r entry; do
+    pattern="$(part 1 "$entry")"
+    [ -n "$pattern" ] || continue
+    case "$command_text" in
+        *"$pattern"*) block "$pattern" "$(rest_from 2 "$entry")" ;;
+    esac
+done < <(conf_values "$root" block)
 
 exit 0

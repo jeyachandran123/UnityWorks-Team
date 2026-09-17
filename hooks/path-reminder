@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# PostToolUse: after an edit under a declared path, print the project's reminder.
+#
+#   remind = <path-prefix> :: <message>
+#
+# Advisory by design — PostToolUse runs after the edit succeeded and cannot
+# block. It exists for follow-up steps no test can observe, typically in a
+# different repository (regenerate a client, bump a pin, update a doc).
+
+set -uo pipefail
+
+payload="$(cat)"
+. "$(dirname "$0")/lib/common"
+
+path="$(normalise_path "$(json_field file_path)")"
+[ -n "$path" ] || exit 0
+root="$(repo_root_of "$path")" || exit 0
+team_conf "$root" >/dev/null || exit 0
+
+rel="${path#"$root"/}"
+
+while IFS= read -r entry; do
+    if under "$rel" "$(part 1 "$entry")"; then
+        printf '%s\n' "$(rest_from 2 "$entry")" >&2
+    fi
+done < <(conf_values "$root" remind)
+
+exit 0

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# run-check [name] — run the project's declared checks, changing no files.
+#
+#   check = <name> :: <shell command, run from the repository root>
+#
+# With a name, runs that check; without, lists them and runs all. Each check
+# gets the team-context variables in its environment (REPO_SELF, REPO_<LABEL>
+# for related repositories, TEAM_SCRIPTS for this plugin's scripts). Exit 0 only
+# when every check that ran passed.
+
+set -uo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+. "$here/../hooks/lib/common"
+
+context="$(bash "$here/team-context")" || exit 1
+eval "$context"
+export TEAM_SCRIPTS="$here"
+while IFS='=' read -r var _; do
+    case "$var" in REPO_*|TEAM_*) export "${var?}" ;; esac
+done <<<"$context"
+
+wanted="${1:-}"
+entries="$(conf_values "$REPO_SELF" check)"
+if [ -z "$entries" ]; then
+    echo "No checks declared. Add 'check = <name> :: <command>' to $REPO_SELF/.claude/team.conf (see /team-init)."
+    exit 0
+fi
+
+status=0 ran=0
+while IFS= read -r entry; do
+    name="$(part 1 "$entry")"
+    cmd="$(rest_from 2 "$entry")"
+    [ -z "$wanted" ] || [ "$wanted" = "$name" ] || continue
+    ran=$((ran + 1))
+    printf '== check: %s\n' "$name"
+    (cd "$REPO_SELF" && bash -c "$cmd")
+    rc=$?
+    if [ "$rc" -eq 0 ]; then printf '== PASS %s\n\n' "$name"; else printf '== FAIL %s (exit %s)\n\n' "$name" "$rc"; status=1; fi
+done <<<"$entries"
+
+if [ "$ran" -eq 0 ]; then
+    printf 'No check named "%s". Declared: %s\n' "$wanted" "$(printf '%s\n' "$entries" | while IFS= read -r e; do printf '%s ' "$(part 1 "$e")"; done)"
+    exit 1
+fi
+[ -n "$TEAM_MISSING" ] && printf 'Note: related repositories not found: %s\n' "$TEAM_MISSING"
+exit "$status"

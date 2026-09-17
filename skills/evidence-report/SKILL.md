@@ -1,6 +1,6 @@
 ---
 name: evidence-report
-description: Use when writing a review, audit, specialist finding or triage report for the UnityWorks Vision AI repositories, including anything filed under docs/reviews/ — and whenever a unityworks-team agent produces its output.
+description: Use when writing a review, audit, specialist finding or triage report for a repository, including anything filed under a reviews directory such as docs/reviews/ — and whenever a unityworks-team agent produces its output.
 ---
 
 # Evidence Report
@@ -13,8 +13,9 @@ is not filed.
 
 ## Where it goes
 
-`docs/reviews/<YYYY-MM-DD>/<role>.md` inside the repository reviewed. Date is today (`date +%F`).
-A review spanning both repos files one report per repo. `tech-lead` writes `00-triage.md` in the same
+`<reviews>/<YYYY-MM-DD>/<role>.md` inside the root of the repository reviewed, where `<reviews>` is the
+`reviews` value in that repository's `.claude/team.conf` (default `docs/reviews`). Date is today
+(`date +%F`). A review spanning several repositories files one report per repository. `tech-lead` writes `00-triage.md` in the same
 directory.
 
 ## The file, exactly

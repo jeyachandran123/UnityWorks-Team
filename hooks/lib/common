@@ -1,9 +1,9 @@
-# Shared helpers for hook scripts. Sourced, never executed.
+# Shared helpers for hook scripts and plugin scripts. Sourced, never executed.
 #
-# Every hook reads the tool-call payload as raw JSON on stdin. jq is not present
-# on every machine, so fields are extracted with sed and never unescaped.
+# Nothing here knows about any particular project. Project facts come from the
+# repository's own .claude/team.conf (format: skills/team-setup/SKILL.md).
 
-# json_field <name> — first string value of "<name>" in $payload.
+# json_field <name> — first string value of "<name>" in $payload (raw JSON, no jq).
 json_field() {
     printf '%s' "$payload" \
         | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\(\([^\"\\\\]\|\\\\.\)*\)\".*/\1/p" \
@@ -15,28 +15,24 @@ json_field() {
 # Claude Code on Windows supplies native backslash paths, and because the JSON
 # is never unescaped each real backslash is still doubled on the wire
 # (C:\\Users\\...). Collapse each doubled pair to one "/" — a single-backslash
-# swap would leave "app//api", which no multi-segment case pattern matches, and
-# the guard would silently allow everything on Windows.
+# swap would leave "app//api", which no prefix match accepts, and every guard
+# would silently allow everything on Windows.
 normalise_path() {
     local p="$1"
     p="${p//\\\\//}"
     printf '%s' "${p//\\//}"
 }
 
-# repo_root_of <path> — nearest ancestor directory holding .git, or empty.
-#
-# Guards scope themselves by the repository a file belongs to rather than by a
-# bare path fragment: "*/tools/*" matches half the directories on a machine,
-# while "tools/ at the root of the repo that also holds vision_os/" matches one.
+# repo_root_of <path> — nearest ancestor directory holding .git, or fail.
 repo_root_of() {
-    local dir
-    dir="$(dirname "$1")"
+    local dir parent
+    dir="$1"
+    [ -d "$dir" ] || dir="$(dirname "$dir")"
     while [ -n "$dir" ] && [ "$dir" != "/" ] && [ "$dir" != "." ]; do
         if [ -e "$dir/.git" ]; then
             printf '%s' "$dir"
             return 0
         fi
-        local parent
         parent="$(dirname "$dir")"
         [ "$parent" = "$dir" ] && break
         dir="$parent"
@@ -44,6 +40,45 @@ repo_root_of() {
     return 1
 }
 
-# Repository identity, by the files only that repository has.
-is_vision_backend() { [ -d "$1/vision_os" ] && [ -f "$1/scripts/export_openapi.py" ]; }
-is_vision_frontend() { [ -f "$1/scripts/generate-types.mjs" ]; }
+# team_conf <root> — path of the repository's team.conf, or fail.
+team_conf() {
+    [ -f "$1/.claude/team.conf" ] && printf '%s' "$1/.claude/team.conf"
+}
+
+# conf_values <root> <key> — every value of <key>, one per line, trimmed.
+# Lines are "key = value"; "#" starts a comment only at the start of a line;
+# CRLF checkouts are handled.
+conf_values() {
+    local conf
+    conf="$(team_conf "$1")" || return 0
+    tr -d '\r' < "$conf" \
+        | sed -n "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/\1/p"
+}
+
+# conf_value <root> <key> [default] — the first value of <key>.
+conf_value() {
+    local v
+    v="$(conf_values "$1" "$2" | head -1)"
+    printf '%s' "${v:-${3:-}}"
+}
+
+# part <n> <value> — the n-th " :: "-separated part of a value, trimmed.
+part() {
+    printf '%s' "$2" | awk -v n="$1" 'BEGIN { FS = "[[:space:]]*::[[:space:]]*" } { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $n); print $n }'
+}
+
+# rest_from <n> <value> — parts n.. rejoined with " :: " (messages may contain "::").
+rest_from() {
+    printf '%s' "$2" | awk -v n="$1" 'BEGIN { FS = "[[:space:]]*::[[:space:]]*" } { s = $n; for (i = n + 1; i <= NF; i++) s = s " :: " $i; print s }'
+}
+
+# under <rel-path> <prefixes...> — true when rel-path starts with any prefix.
+under() {
+    local rel="$1" prefix
+    shift
+    for prefix in "$@"; do
+        [ -n "$prefix" ] || continue
+        case "$rel" in "$prefix"*) return 0 ;; esac
+    done
+    return 1
+}

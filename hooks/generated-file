@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# PreToolUse: src/shared/types/openapi.ts is emitted by scripts/generate-types.mjs.
+# PreToolUse: block hand-edits of files a project declares generated.
 #
-# A hand-edit here survives review (it is valid TypeScript, and it compiles) and
-# then vanishes at the next types:generate — after having quietly made the
-# frontend agree with an API the backend does not serve.
+#   generated = <path> :: <how to regenerate it>
+#
+# A hand-edit of a generated file survives review (it is valid code) and then
+# vanishes at the next generation — after quietly making the project agree with
+# a source of truth that never changed.
 
 set -uo pipefail
 
@@ -12,21 +14,24 @@ payload="$(cat)"
 
 path="$(normalise_path "$(json_field file_path)")"
 [ -n "$path" ] || exit 0
-
 root="$(repo_root_of "$path")" || exit 0
-is_vision_frontend "$root" || exit 0
+team_conf "$root" >/dev/null || exit 0
 
-if [ "${path#"$root"/}" = "src/shared/types/openapi.ts" ]; then
-    cat >&2 <<'MSG'
-BLOCKED: src/shared/types/openapi.ts is generated, not written.
+rel="${path#"$root"/}"
 
-Its only legitimate author is scripts/generate-types.mjs. To change it, change
-the backend schema and regenerate:
+while IFS= read -r entry; do
+    target="$(part 1 "$entry")"
+    how="$(rest_from 2 "$entry")"
+    if [ "$rel" = "$target" ]; then
+        cat >&2 <<MSG
+BLOCKED: $rel is generated, not written.
 
-    python scripts/export_openapi.py      (in the backend repository)
-    npm run types:generate                (in the frontend repository)
+Change its source and regenerate instead:
+
+    ${how:-(see .claude/team.conf)}
 MSG
-    exit 2
-fi
+        exit 2
+    fi
+done < <(conf_values "$root" generated)
 
 exit 0

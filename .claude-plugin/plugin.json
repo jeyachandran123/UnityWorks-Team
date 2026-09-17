@@ -1,7 +1,7 @@
 {
   "name": "unityworks-team",
-  "description": "Specialist review roster, procedures and gates for the UnityWorks Vision AI repositories",
-  "version": "0.3.1",
+  "description": "Project-agnostic engineering team for Claude Code: specialist reviewers, verification gates and guards driven by each repository's .claude/team.conf",
+  "version": "0.4.0",
   "author": {
     "name": "Jeyachandran S"
   },

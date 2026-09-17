@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# PreToolUse: block edits to the migrated-verbatim trees of the Vision AI backend.
+# PreToolUse: block edits under paths a project declares protected.
 #
-# vision_os/ is byte-identical to its source and compliance/ and tools/ are
-# excluded from lint for the same reason. A test proves the dependency arrow, but
-# no test proves you MEANT to edit here. This asks for that intent explicitly.
+#   protect        = <path-prefix> :: <why>
+#   protect-except = <path-prefix>
 #
-# Scoped to the repository that holds both vision_os/ and
-# scripts/export_openapi.py, so an unrelated project's tools/ is never touched.
+# in the repository's .claude/team.conf. A repository without team.conf, or a
+# file outside every declared prefix, is never touched.
 
 set -uo pipefail
 
@@ -15,24 +14,29 @@ payload="$(cat)"
 
 path="$(normalise_path "$(json_field file_path)")"
 [ -n "$path" ] || exit 0
-
 root="$(repo_root_of "$path")" || exit 0
-is_vision_backend "$root" || exit 0
+team_conf "$root" >/dev/null || exit 0
 
-case "${path#"$root"/}" in
-    vision_os/*|compliance/*|tools/*)
+rel="${path#"$root"/}"
+
+while IFS= read -r exempt; do
+    under "$rel" "$exempt" && exit 0
+done < <(conf_values "$root" protect-except)
+
+while IFS= read -r entry; do
+    prefix="$(part 1 "$entry")"
+    why="$(rest_from 2 "$entry")"
+    if under "$rel" "$prefix"; then
         cat >&2 <<MSG
-BLOCKED: $path is inside a migrated-verbatim tree.
+BLOCKED: $rel is inside a protected path ($prefix).
 
-vision_os/, compliance/ and tools/ are moved unchanged from their source and are
-excluded from lint for that reason. Editing here breaks the migration invariant
-asserted by tests/app/test_migration.py.
+${why:-This project marks it protected in .claude/team.conf.}
 
 If the change is genuinely required, stop and ask the user to confirm it
 explicitly, so it is made deliberately rather than incidentally.
 MSG
         exit 2
-        ;;
-esac
+    fi
+done < <(conf_values "$root" protect)
 
 exit 0

@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# PreToolUse: keep unityworks-team specialist agents advisory.
+# PreToolUse: keep specialist agents advisory.
 #
-# The roster's agents carry no Edit tool, but they need Write (to file their
-# report) and Bash (a QA engineer that cannot run pytest is useless), and both
-# can mutate. A permission deny-list in settings.json cannot express "only for
-# these agents" — it would bind the main session too. This hook can: Claude Code
-# names the subagent in the payload, so the restriction reaches the roster and
-# nothing else.
+# Applies to this plugin's agents (agent_type "unityworks-team:<role>") and to
+# any project agent a repository names in .claude/team.conf:
 #
-# For a unityworks-team agent:
-#   - Write/Edit/MultiEdit/NotebookEdit only under docs/reviews/ (or a temp dir,
-#     where scratch-copy mutations live)
-#   - no git history or working-tree mutation, no dependency installs, no
-#     migrations applied
-# Any other caller: exit 0 immediately.
+#   agent = <agent name>
+#
+# Those agents need Write (to file a report) and Bash (to run tests), and both
+# can mutate. A permission deny-list in settings.json cannot say "only for
+# these agents" — it binds the main session too. This hook can, because Claude
+# Code names the subagent in the payload.
+#
+#   - Write/Edit only under the repository's reviews directory
+#     (reviews = <dir>, default docs/reviews) or inside a scratch copy
+#   - no git history or working-tree changes, no dependency installs
+#   - plus per project:  advisor-block = <command substring> :: <why>
+#                        advisor-allow = <command substring>   (overrides advisor-block)
 
 set -uo pipefail
 
@@ -21,11 +23,18 @@ payload="$(cat)"
 . "$(dirname "$0")/lib/common"
 
 agent="$(json_field agent_type)"
+[ -n "$agent" ] || exit 0
+
+cwd="$(normalise_path "$(json_field cwd)")"
+[ -n "$cwd" ] || cwd="$PWD"
+cwd_root="$(repo_root_of "$cwd")" || cwd_root=""
+
 case "$agent" in
     unityworks-team:*) ;;
-    security-engineer|architecture-auditor|vision-specialist|backend-engineer|frontend-engineer) ;;
-    ux-architect|devops-engineer|qa-engineer|product-analyst|release-scribe|tech-lead|ai-ml-architect) ;;
-    *) exit 0 ;;
+    *)
+        [ -n "$cwd_root" ] || exit 0
+        conf_values "$cwd_root" agent | grep -qxF "$agent" || exit 0
+        ;;
 esac
 
 block() {
@@ -38,18 +47,20 @@ case "$tool" in
     Write|Edit|MultiEdit|NotebookEdit)
         path="$(normalise_path "$(json_field file_path)")"
         [ -n "$path" ] || path="$(normalise_path "$(json_field notebook_path)")"
-        case "$path" in
-            */docs/reviews/*) exit 0 ;;
-        esac
-        # Inside a copy made by skills/invariant-audit/scratch-copy — where
-        # mutation testing belongs — identified by its marker, not by "temp".
+
+        # Inside a copy made by skills/invariant-audit/scratch-copy.
         dir="$(dirname "$path")"
         while [ -n "$dir" ] && [ "$dir" != "/" ] && [ "$dir" != "." ]; do
             [ -f "$dir/.unityworks-scratch-copy" ] && exit 0
             parent="$(dirname "$dir")"; [ "$parent" = "$dir" ] && break; dir="$parent"
         done
+
+        if root="$(repo_root_of "$path")"; then
+            reviews="$(conf_value "$root" reviews docs/reviews)"
+            under "${path#"$root"/}" "${reviews%/}/" && exit 0
+        fi
         block "writing $path" \
-"Reports go to docs/reviews/<date>/<role>.md. Put the proposed change in the
+"Reports go to <reviews>/<date>/<role>.md. Put the proposed change in the
 report's Recommendation instead."
         ;;
     Bash|PowerShell)
@@ -63,17 +74,20 @@ report's Recommendation instead."
 "Read history with git log/show/diff/status. For mutation testing use the
 invariant-audit scratch-copy helper, which needs no git."
                 ;;
-            *"npm install"*|*"npm i "*|*"npm ci"*|*"npm uninstall"*|*"npm update"*|*"pip install"*|*"pip uninstall"*|*"uv pip"*|*"poetry add"*)
+            *"npm install"*|*"npm i "*|*"npm ci"*|*"npm uninstall"*|*"npm update"*|\
+            *"pnpm add"*|*"pnpm install"*|*"yarn add"*|*"pip install"*|*"pip uninstall"*|*"uv pip"*|*"poetry add"*)
                 block "dependency change: $cmd" "Report the missing dependency instead."
                 ;;
-            *"alembic upgrade"*|*"alembic downgrade"*|*"alembic stamp"*|*"alembic revision"*)
-                case "$cmd" in
-                    *DATABASE_URL_OVERRIDE=*sqlite*) exit 0 ;;   # disposable check per db-migration
-                esac
-                block "migration against a configured database: $cmd" \
-"Use a disposable SQLite file via DATABASE_URL_OVERRIDE, as the db-migration skill shows."
-                ;;
         esac
+        [ -n "$cwd_root" ] || exit 0
+        while IFS= read -r allowed; do
+            [ -n "$allowed" ] && case "$cmd" in *"$allowed"*) exit 0 ;; esac
+        done < <(conf_values "$cwd_root" advisor-allow)
+        while IFS= read -r entry; do
+            pattern="$(part 1 "$entry")"
+            [ -n "$pattern" ] || continue
+            case "$cmd" in *"$pattern"*) block "$pattern" "$(rest_from 2 "$entry")" ;; esac
+        done < <(conf_values "$cwd_root" advisor-block)
         ;;
 esac
 

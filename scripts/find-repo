@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# find-repo <kind> [start-dir] — print the root of a repository identified by
-# what is INSIDE it, never by its folder name or location.
-#
-#   vision-backend        vision_os/ + scripts/export_openapi.py
-#   vision-frontend       scripts/generate-types.mjs + src/shared/types/
-#   ai-assistant-backend  app/llm/profiles.py + app/cognitive_integration/
+# find-repo <kind> [start-dir] — print the root of the repository whose
+# .claude/team.conf declares "kind = <kind>". Never by folder name or location.
 #
 # Search order from start-dir (default: current directory), nearest first:
 #   1. the repository containing start-dir
@@ -14,19 +10,12 @@
 # the nearest level that has a match — it never silently picks one.
 
 set -uo pipefail
+. "$(cd "$(dirname "$0")/../hooks/lib" && pwd)/common"
 
-kind="${1:?usage: find-repo vision-backend|vision-frontend|ai-assistant-backend [start-dir]}"
+kind="${1:?usage: find-repo <kind> [start-dir]}"
 start="$(cd "${2:-$PWD}" 2>/dev/null && pwd)" || { echo "find-repo: no such directory: ${2:-}" >&2; exit 1; }
 
-is_kind() {
-    local d="$1"
-    case "$kind" in
-        vision-backend)       [ -d "$d/vision_os" ] && [ -f "$d/scripts/export_openapi.py" ] ;;
-        vision-frontend)      [ -f "$d/scripts/generate-types.mjs" ] && [ -d "$d/src/shared/types" ] ;;
-        ai-assistant-backend) [ -f "$d/app/llm/profiles.py" ] && [ -d "$d/app/cognitive_integration" ] ;;
-        *) echo "find-repo: unknown kind '$kind'" >&2; exit 64 ;;
-    esac
-}
+is_kind() { [ "$(conf_value "$1" kind)" = "$kind" ]; }
 
 # repositories <dir> <depth> — directories holding .git, at or below dir.
 repositories() {
@@ -49,7 +38,7 @@ search() {
         printf '%s\n' "${matches[0]}"
         exit 0
     elif [ "$count" -gt 1 ]; then
-        printf 'find-repo: more than one %s found:\n' "$kind" >&2
+        printf 'find-repo: more than one repository of kind %s:\n' "$kind" >&2
         printf '  %s\n' "${matches[@]}" >&2
         printf 'Run from inside the one you mean, or pass it as start-dir.\n' >&2
         exit 2
@@ -57,27 +46,18 @@ search() {
     return 1
 }
 
-# 1. The repository containing start-dir: nearest ancestor holding .git (a file
-#    in worktrees). No git call, so any checkout works, readable by git or not.
-own=""
-d="$start"
-while [ -n "$d" ] && [ "$d" != "/" ]; do
-    if [ -e "$d/.git" ]; then own="$d"; break; fi
-    parent="$(dirname "$d")"; [ "$parent" = "$d" ] && break; d="$parent"
-done
+own="$(repo_root_of "$start")" || own=""
 if [ -n "$own" ] && is_kind "$own"; then
     printf '%s\n' "$own"
     exit 0
 fi
 
-# 2. Below start-dir.
 search "$start" 2
 
-# 3. Beside the containing repository (or start-dir), then one level wider.
 anchor="${own:-$start}"
 parent="$(dirname "$anchor")"
 search "$parent" 1
 search "$(dirname "$parent")" 2
 
-echo "find-repo: no $kind repository found near $start" >&2
+echo "find-repo: no repository with 'kind = $kind' in .claude/team.conf near $start" >&2
 exit 1

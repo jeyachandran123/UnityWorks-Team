@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# team-context [start-dir] — describe the project Claude Code is working in, for
+# commands and agents. Prints shell-safe assignments:
+#
+#   REPO_SELF=<root>  TEAM_NAME=…  TEAM_KIND=…  TEAM_REVIEWS=<dir>  TEAM_CONFIGURED=yes|no
+#   REPO_<LABEL>=<root>                 for each "related = <label> :: <kind>" that resolves
+#   TEAM_MISSING="<label> …"            related repositories that could not be found
+#
+# Usage in a command:  eval "$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/team-context")"
+# A repository without .claude/team.conf still gets REPO_SELF and defaults, so
+# every command works (with generic behaviour) before /team-init has been run.
+
+set -uo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+. "$here/../hooks/lib/common"
+
+start="$(cd "${1:-$PWD}" 2>/dev/null && pwd)" || { echo "team-context: no such directory" >&2; exit 1; }
+root="$(repo_root_of "$start")" || { echo "team-context: $start is not inside a git repository" >&2; exit 1; }
+
+q() { printf '%q' "$1"; }
+
+if team_conf "$root" >/dev/null; then configured=yes; else configured=no; fi
+printf 'REPO_SELF=%s\n' "$(q "$root")"
+printf 'TEAM_CONFIGURED=%s\n' "$configured"
+printf 'TEAM_NAME=%s\n' "$(q "$(conf_value "$root" name "$(basename "$root")")")"
+printf 'TEAM_KIND=%s\n' "$(q "$(conf_value "$root" kind)")"
+printf 'TEAM_REVIEWS=%s\n' "$(q "$(conf_value "$root" reviews docs/reviews)")"
+
+missing=""
+while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    label="$(part 1 "$entry" | tr '[:lower:]-' '[:upper:]_')"
+    kind="$(part 2 "$entry")"
+    if found="$(bash "$here/find-repo" "$kind" "$root" 2>/dev/null)"; then
+        printf 'REPO_%s=%s\n' "$label" "$(q "$found")"
+    else
+        missing="$missing $label"
+    fi
+done < <(conf_values "$root" related)
+printf 'TEAM_MISSING=%s\n' "$(q "${missing# }")"

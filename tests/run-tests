@@ -1,70 +1,69 @@
 #!/usr/bin/env bash
-# Hook tests. Each case pipes a PreToolUse/PostToolUse/Stop payload into a hook
-# and asserts its exit code or output. Exit 2 means "block"; exit 0 "allow".
+# Tests for the hooks and scripts. Fixture repositories describe themselves in
+# .claude/team.conf exactly as real projects do; nothing here knows any real
+# project. Exit 2 from a hook means "block"; exit 0 "allow".
 #
 # Run: bash tests/run-tests
 
 set -uo pipefail
 
 HOOKS="$(cd "$(dirname "$0")/../hooks" && pwd)"
+SCRIPTS="$(cd "$(dirname "$0")/../scripts" && pwd)"
 pass=0
 fail=0
 
 # ---- fixtures -------------------------------------------------------------
-#
-# Path guards scope themselves by the repository a file lives in, identified by
-# marker files, so the fixtures are real directories rather than "/repo/..."
-# strings: a backend (vision_os/ + scripts/export_openapi.py), a frontend
-# (scripts/generate-types.mjs) and an unrelated repository that also has a
-# tools/ and a src/shared/types/openapi.ts — which no guard may touch.
 
 FIX="$(mktemp -d)"
 trap 'rm -rf "$FIX"' EXIT
 
-BACKEND="$FIX/unityworks-vision-ai-backend"
-FRONTEND="$FIX/unityworks-vision-ai-frontend"
-OTHER="$FIX/other-project"
+API="$FIX/work/api-srv"          # folder names deliberately unrelated to kinds
+WEB="$FIX/work/web-ui"
+PLAIN="$FIX/work/plain"           # a git repository with no team.conf
+LOOSE="$FIX/loose"                # not a repository at all
 
-mkdir -p "$BACKEND/.git" "$BACKEND/vision_os" "$BACKEND/scripts" \
-         "$FRONTEND/.git" "$FRONTEND/scripts" \
-         "$OTHER/.git" "$OTHER/tools" "$OTHER/scripts"
-touch "$BACKEND/scripts/export_openapi.py" "$FRONTEND/scripts/generate-types.mjs"
-SCRATCH="$FIX/scratch/unityworks-vision-ai-backend"   # as made by scratch-copy
-mkdir -p "$SCRATCH/vision_os" && touch "$SCRATCH/.unityworks-scratch-copy"
+mkdir -p "$API/.claude/team/checks" "$API/src" "$WEB/.claude" "$PLAIN/vendor" "$LOOSE"
+for repo in "$API" "$WEB" "$PLAIN"; do git init -q "$repo"; done
+
+cat > "$API/.claude/team.conf" <<'EOF'
+# test fixture
+name    = Billing API
+kind    = billing-api
+related = web :: billing-web
+
+protect        = vendor/ :: Vendored verbatim; use scripts/vendor.sh.
+protect-except = vendor/README.md
+remind         = src/routes/ :: Routes changed :: export the schema, then /check contract.
+block          = db reset :: Drops the database. Write a migration instead.
+
+gate  = src/ test/ :: npm test :: npm test
+gate  = src/routes/ :: export-schema :: npm run export-schema --check
+
+check = ok :: echo "self=$REPO_SELF web=$REPO_WEB"
+check = broken :: exit 3
+
+agent         = billing-expert
+advisor-allow = db migrate --dry-run
+advisor-block = db migrate :: Reviewers never migrate the configured database.
+EOF
+
+# The web repository's conf is written with CRLF line endings, as a Windows
+# checkout with core.autocrlf produces.
+printf '%s\r\n' "name = Billing web" "kind = billing-web" "reviews = audit/reviews" \
+    "related = api :: billing-api" "generated = src/api/schema.ts :: npm run codegen" \
+    "gate = src/ :: npm run verify :: npm run verify" > "$WEB/.claude/team.conf"
 
 # win <posix-path> — the path as Claude Code on Windows puts it on the wire:
-# native backslashes, each doubled by JSON escaping. Empty when cygpath is
-# unavailable (non-Windows), and the Windows cases are then skipped.
+# native backslashes, each doubled by JSON escaping. Empty without cygpath.
 win() {
     command -v cygpath >/dev/null 2>&1 || return 0
     cygpath -w "$1" | sed 's/\\/\\\\/g'
 }
 
 edit_payload() { printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$1"; }
-bash_payload() { printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$1"; }
+bash_payload() { printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"%s"}}' "$1" "$2"; }
 
 # ---- assertions -----------------------------------------------------------
-
-# expect <name> <expected-exit> <script> <json-payload>
-expect() {
-    local name="$1" want="$2" script="$3" payload="$4"
-    local got
-    printf '%s' "$payload" | bash "${HOOKS}/${script}" >/dev/null 2>&1
-    got=$?
-    report "$name" "$want" "$got"
-}
-
-# expect_via_launcher <name> <expected-exit> <script> <json-payload>
-# Drives the payload through hooks/run-hook.cmd, the launcher hooks.json
-# invokes. Under bash this exercises only the launcher's Unix fallthrough half,
-# but it proves dispatch to the right script and exit-code propagation.
-expect_via_launcher() {
-    local name="$1" want="$2" script="$3" payload="$4"
-    local got
-    printf '%s' "$payload" | bash "${HOOKS}/run-hook.cmd" "$script" >/dev/null 2>&1
-    got=$?
-    report "$name" "$want" "$got"
-}
 
 report() {
     if [ "$3" -eq "$2" ]; then
@@ -74,21 +73,40 @@ report() {
     fi
 }
 
-# expect_output <name> <expected-substring-or-empty> <script> <json-payload>
-# Asserts on combined stdout+stderr. An empty expectation means "prints nothing".
+# expect <name> <expected-exit> <hook> <json-payload>
+expect() {
+    printf '%s' "$4" | bash "$HOOKS/$3" >/dev/null 2>&1
+    report "$1" "$2" $?
+}
+
+# expect_via_launcher <name> <expected-exit> <hook> <json-payload> — through run-hook.cmd
+expect_via_launcher() {
+    printf '%s' "$4" | bash "$HOOKS/run-hook.cmd" "$3" >/dev/null 2>&1
+    report "$1" "$2" $?
+}
+
+# expect_output <name> <substring-or-empty> <hook> <json-payload>
 expect_output() {
-    local name="$1" want="$2" script="$3" payload="$4"
     local out
-    out="$(printf '%s' "$payload" | bash "${HOOKS}/${script}" 2>&1)"
-    if [ -z "$want" ]; then
-        if [ -z "$out" ]; then
-            printf 'ok   %s\n' "$name"; pass=$((pass + 1)); return
-        fi
-        printf 'FAIL %s (expected no output, got: %s)\n' "$name" "$out"; fail=$((fail + 1)); return
+    out="$(printf '%s' "$4" | bash "$HOOKS/$3" 2>&1)"
+    if [ -z "$2" ]; then
+        [ -z "$out" ] && { report "$1" 0 0; return; }
+        printf 'FAIL %s (expected no output, got: %s)\n' "$1" "$out"; fail=$((fail + 1)); return
     fi
     case "$out" in
-        *"$want"*) printf 'ok   %s\n' "$name"; pass=$((pass + 1)) ;;
-        *) printf 'FAIL %s (output did not contain %s)\n' "$name" "$want"; fail=$((fail + 1)) ;;
+        *"$2"*) report "$1" 0 0 ;;
+        *) printf 'FAIL %s (output did not contain "%s": %s)\n' "$1" "$2" "$out"; fail=$((fail + 1)) ;;
+    esac
+}
+
+# expect_stdout <name> <substring> <command...> — asserts on a script's stdout+stderr
+expect_stdout() {
+    local name="$1" want="$2" out
+    shift 2
+    out="$("$@" 2>&1)"
+    case "$out" in
+        *"$want"*) report "$name" 0 0 ;;
+        *) printf 'FAIL %s (output did not contain "%s": %s)\n' "$name" "$want" "$out"; fail=$((fail + 1)) ;;
     esac
 }
 
@@ -96,288 +114,195 @@ skip() { printf 'skip %s (no cygpath)\n' "$1"; }
 
 # ---- hooks.json -----------------------------------------------------------
 
-# Every command hooks.json registers must name a script that exists, or that
-# hook fails open without a word.
 for script in $(grep -o 'run-hook.cmd\\" [a-z-]*' "$HOOKS/hooks.json" | awk '{print $2}'); do
-    if [ -f "$HOOKS/$script" ]; then
-        report "hooks.json names an existing script: $script" 0 0
-    else
-        report "hooks.json names an existing script: $script" 0 1
-    fi
+    [ -f "$HOOKS/$script" ]; report "hooks.json names an existing script: $script" 0 $?
 done
 
-# ---- secret-guard ---------------------------------------------------------
+# ---- secret-guard (no configuration) --------------------------------------
 
 expect "secret-guard blocks a write to .env" 2 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/.env","content":"X=1"}}'
-
 expect "secret-guard blocks an AWS key in content" 2 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/config.py","content":"KEY = \"AKIAIOSFODNN7EXAMPLE\""}}'
-
 expect "secret-guard blocks a long hex secret" 2 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/x.py","content":"SECRET_KEY = \"0123456789abcdef0123456789abcdef0123456789abcdef\""}}'
-
 expect "secret-guard allows .env.example" 0 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/.env.example","content":"SECRET_KEY=changeme"}}'
-
 expect "secret-guard allows ordinary source" 0 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/main.py","content":"def run(): pass"}}'
-
-# A secret-shaped keyword appearing only as a substring of a descriptive
-# identifier must not block — over-blocking is what gets a guard disabled.
+# A secret-shaped keyword inside a descriptive identifier must not block.
 expect "secret-guard allows a hash assigned to a descriptively-named field" 0 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/tests/fixtures/auth.py","content":"expected_password_hash = \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\""}}'
-
 expect "secret-guard allows a commit hash assigned to BUILD_TOKEN" 0 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/scripts/build.py","content":"BUILD_TOKEN = \"a7dcf87dbefa45a710fdce1844c7bc20abc5953b\""}}'
-
-expect "secret-guard allows a TypeScript import" 0 secret-guard \
-    '{"tool_name":"Write","tool_input":{"file_path":"/repo/frontend/src/index.ts","content":"import { LongDescriptiveComponentNameForRouting } from \"../components/shared/layout\""}}'
-
 expect "secret-guard allows an unnamed long base64 asset string" 0 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/assets.py","content":"ASSET_DATA = \"aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkaGVsbG93b3JsZA==\""}}'
-
-expect "secret-guard allows a short api_key" 0 secret-guard \
-    '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/config.py","content":"api_key = \"short123\""}}'
-
 expect_via_launcher "secret-guard blocks a write to .env through run-hook.cmd" 2 secret-guard \
     '{"tool_name":"Write","tool_input":{"file_path":"/repo/.env","content":"X=1"}}'
 
-# ---- contract-reminder ----------------------------------------------------
+# ---- protected-tree (protect / protect-except) ----------------------------
 
-expect_output "contract-reminder names the export command on a route edit" "export_openapi" contract-reminder \
-    "$(edit_payload "$BACKEND/app/api/product.py")"
+expect "protected-tree blocks an edit under a declared prefix" 2 protected-tree "$(edit_payload "$API/vendor/lib/x.js")"
+expect_output "protected-tree prints the declared reason" "use scripts/vendor.sh" protected-tree "$(edit_payload "$API/vendor/lib/x.js")"
+expect "protected-tree honours protect-except" 0 protected-tree "$(edit_payload "$API/vendor/README.md")"
+expect "protected-tree allows paths outside every prefix" 0 protected-tree "$(edit_payload "$API/src/app.js")"
+expect "protected-tree ignores a repository without team.conf" 0 protected-tree "$(edit_payload "$PLAIN/vendor/x.js")"
+expect "protected-tree ignores a file outside any repository" 0 protected-tree "$(edit_payload "$LOOSE/vendor/x.js")"
+if [ -n "$(win "$API")" ]; then
+    expect "protected-tree blocks a Windows backslash path" 2 protected-tree \
+        "$(edit_payload "$(win "$API")\\\\vendor\\\\lib\\\\x.js")"
+else skip "protected-tree blocks a Windows backslash path"; fi
+expect_via_launcher "protected-tree blocks through run-hook.cmd" 2 protected-tree "$(edit_payload "$API/vendor/lib/x.js")"
 
-expect_output "contract-reminder is silent outside app/api" "" contract-reminder \
-    "$(edit_payload "$BACKEND/app/domain/incidents.py")"
+# ---- generated-file (generated; CRLF conf) --------------------------------
 
-expect_output "contract-reminder is silent for app/api in an unrelated repository" "" contract-reminder \
-    "$(edit_payload "$OTHER/app/api/routes.py")"
+expect "generated-file blocks a declared generated file" 2 generated-file "$(edit_payload "$WEB/src/api/schema.ts")"
+expect_output "generated-file prints how to regenerate" "npm run codegen" generated-file "$(edit_payload "$WEB/src/api/schema.ts")"
+expect "generated-file allows a neighbouring file" 0 generated-file "$(edit_payload "$WEB/src/api/client.ts")"
+expect "generated-file ignores the same path in a repository without team.conf" 0 generated-file "$(edit_payload "$PLAIN/src/api/schema.ts")"
+if [ -n "$(win "$WEB")" ]; then
+    expect "generated-file blocks a Windows backslash path" 2 generated-file \
+        "$(edit_payload "$(win "$WEB")\\\\src\\\\api\\\\schema.ts")"
+else skip "generated-file blocks a Windows backslash path"; fi
 
-if [ -n "$(win "$BACKEND")" ]; then
-    expect_output "contract-reminder fires on a Windows backslash route edit" "export_openapi" contract-reminder \
-        "$(edit_payload "$(win "$BACKEND")\\\\app\\\\api\\\\product.py")"
-else
-    skip "contract-reminder fires on a Windows backslash route edit"
-fi
+# ---- path-reminder (remind) -----------------------------------------------
 
-# ---- protected-tree -------------------------------------------------------
+expect_output "path-reminder prints the declared message under the prefix" "then /check contract" path-reminder "$(edit_payload "$API/src/routes/users.js")"
+expect_output "path-reminder keeps :: inside a message" "Routes changed :: export the schema" path-reminder "$(edit_payload "$API/src/routes/users.js")"
+expect_output "path-reminder is silent outside the prefix" "" path-reminder "$(edit_payload "$API/src/models/user.js")"
+expect_output "path-reminder is silent without team.conf" "" path-reminder "$(edit_payload "$PLAIN/src/routes/users.js")"
 
-expect "protected-tree blocks a vision_os edit" 2 protected-tree \
-    "$(edit_payload "$BACKEND/vision_os/kernel/runtime.py")"
+# ---- destructive-bash (built-in + block) ----------------------------------
 
-expect "protected-tree blocks a compliance edit" 2 protected-tree \
-    "$(edit_payload "$BACKEND/compliance/evaluator.py")"
-
-expect "protected-tree blocks a tools edit" 2 protected-tree \
-    "$(edit_payload "$BACKEND/tools/vision_eval/metrics.py")"
-
-expect "protected-tree allows an app edit" 0 protected-tree \
-    "$(edit_payload "$BACKEND/app/vision/manager.py")"
-
-expect "protected-tree allows tests/vision_os" 0 protected-tree \
-    "$(edit_payload "$BACKEND/tests/vision_os/architecture/test_boundaries.py")"
-
-expect "protected-tree ignores tools/ in an unrelated repository" 0 protected-tree \
-    "$(edit_payload "$OTHER/tools/build.py")"
-
-expect "protected-tree allows a file outside any repository" 0 protected-tree \
-    "$(edit_payload "$FIX/loose/vision_os/x.py")"
-
-if [ -n "$(win "$BACKEND")" ]; then
-    expect "protected-tree blocks a vision_os edit with a Windows backslash path" 2 protected-tree \
-        "$(edit_payload "$(win "$BACKEND")\\\\vision_os\\\\kernel\\\\runtime.py")"
-else
-    skip "protected-tree blocks a vision_os edit with a Windows backslash path"
-fi
-
-expect_via_launcher "protected-tree blocks a vision_os edit through run-hook.cmd" 2 protected-tree \
-    "$(edit_payload "$BACKEND/vision_os/kernel/runtime.py")"
-
-# ---- destructive-bash -----------------------------------------------------
-
-expect "destructive-bash blocks alembic downgrade" 2 destructive-bash "$(bash_payload "alembic downgrade -1")"
-expect "destructive-bash blocks a force push" 2 destructive-bash "$(bash_payload "git push --force origin main")"
-# Bare `git push -f` has no trailing space after "-f"; a pattern requiring one missed it.
-expect "destructive-bash blocks a bare git push -f" 2 destructive-bash "$(bash_payload "git push -f")"
-expect "destructive-bash blocks discarding the tree" 2 destructive-bash "$(bash_payload "git checkout -- .")"
-expect "destructive-bash blocks git clean -fd" 2 destructive-bash "$(bash_payload "git clean -fd")"
-expect "destructive-bash blocks docker compose down" 2 destructive-bash "$(bash_payload "docker compose down -v")"
+expect "destructive-bash blocks a force push anywhere" 2 destructive-bash "$(bash_payload "$LOOSE" "git push --force origin main")"
+expect "destructive-bash blocks a bare git push -f" 2 destructive-bash "$(bash_payload "$LOOSE" "git push -f")"
+expect "destructive-bash blocks discarding the tree" 2 destructive-bash "$(bash_payload "$PLAIN" "git checkout -- .")"
+expect "destructive-bash blocks git clean -fd" 2 destructive-bash "$(bash_payload "$PLAIN" "git clean -fd")"
 expect "destructive-bash blocks through a PowerShell payload" 2 destructive-bash \
-    '{"tool_name":"PowerShell","tool_input":{"command":"git reset --hard HEAD~1"}}'
-expect "destructive-bash allows alembic upgrade" 0 destructive-bash "$(bash_payload "alembic upgrade head")"
-expect "destructive-bash allows an ordinary push" 0 destructive-bash "$(bash_payload "git push origin feat/x")"
-expect "destructive-bash allows docker compose up" 0 destructive-bash "$(bash_payload "docker compose up -d postgres")"
-
-expect_via_launcher "destructive-bash blocks alembic downgrade through run-hook.cmd" 2 destructive-bash \
-    "$(bash_payload "alembic downgrade -1")"
-
-# ---- generated-file -------------------------------------------------------
-
-expect "generated-file blocks a hand-edit of openapi.ts" 2 generated-file \
-    "$(edit_payload "$FRONTEND/src/shared/types/openapi.ts")"
-
-expect "generated-file allows other shared types" 0 generated-file \
-    "$(edit_payload "$FRONTEND/src/shared/types/index.ts")"
-
-expect "generated-file allows the generator itself" 0 generated-file \
-    "$(edit_payload "$FRONTEND/scripts/generate-types.mjs")"
-
-expect "generated-file ignores openapi.ts in an unrelated repository" 0 generated-file \
-    "$(edit_payload "$OTHER/src/shared/types/openapi.ts")"
-
-if [ -n "$(win "$FRONTEND")" ]; then
-    expect "generated-file blocks a Windows backslash path to openapi.ts" 2 generated-file \
-        "$(edit_payload "$(win "$FRONTEND")\\\\src\\\\shared\\\\types\\\\openapi.ts")"
-else
-    skip "generated-file blocks a Windows backslash path to openapi.ts"
-fi
-
-expect_via_launcher "generated-file blocks openapi.ts through run-hook.cmd" 2 generated-file \
-    "$(edit_payload "$FRONTEND/src/shared/types/openapi.ts")"
+    "$(printf '{"tool_name":"PowerShell","cwd":"%s","tool_input":{"command":"git reset --hard HEAD~1"}}' "$PLAIN")"
+expect "destructive-bash applies a project block in that project" 2 destructive-bash "$(bash_payload "$API" "npm run db reset")"
+expect "destructive-bash does not apply it in another repository" 0 destructive-bash "$(bash_payload "$PLAIN" "npm run db reset")"
+expect "destructive-bash allows an ordinary push" 0 destructive-bash "$(bash_payload "$API" "git push origin feat/x")"
+expect_via_launcher "destructive-bash blocks through run-hook.cmd" 2 destructive-bash "$(bash_payload "$API" "npm run db reset")"
 
 # ---- agent-scope ----------------------------------------------------------
 
-agent_write() { printf '{"agent_type":"%s","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$1" "$2"; }
-agent_bash() { printf '{"agent_type":"%s","tool_name":"Bash","tool_input":{"command":"%s"}}' "$1" "$2"; }
+agent_write() { printf '{"agent_type":"%s","cwd":"%s","tool_name":"Write","tool_input":{"file_path":"%s","content":"x"}}' "$1" "$2" "$3"; }
+agent_bash() { printf '{"agent_type":"%s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"%s"}}' "$1" "$2" "$3"; }
 
-expect "agent-scope lets a specialist file its report" 0 agent-scope \
-    "$(agent_write unityworks-team:security-engineer "$BACKEND/docs/reviews/2026-09-17/security-engineer.md")"
-expect "agent-scope blocks a specialist writing source" 2 agent-scope \
-    "$(agent_write unityworks-team:security-engineer "$BACKEND/app/auth/tokens.py")"
-expect "agent-scope blocks a specialist editing source" 2 agent-scope \
-    '{"agent_type":"unityworks-team:qa-engineer","tool_name":"Edit","tool_input":{"file_path":"/repo/tests/app/test_x.py"}}'
+SCRATCH="$FIX/scratch/api-srv"
+mkdir -p "$SCRATCH/src" && touch "$SCRATCH/.unityworks-scratch-copy"
+
+expect "agent-scope lets a plugin agent file a report in docs/reviews" 0 agent-scope \
+    "$(agent_write unityworks-team:qa-engineer "$API" "$API/docs/reviews/2026-09-17/qa-engineer.md")"
+expect "agent-scope honours a custom reviews directory" 0 agent-scope \
+    "$(agent_write unityworks-team:qa-engineer "$WEB" "$WEB/audit/reviews/2026-09-17/qa-engineer.md")"
+expect "agent-scope blocks docs/reviews where the project moved it" 2 agent-scope \
+    "$(agent_write unityworks-team:qa-engineer "$WEB" "$WEB/docs/reviews/2026-09-17/qa-engineer.md")"
+expect "agent-scope blocks a plugin agent writing source" 2 agent-scope \
+    "$(agent_write unityworks-team:security-engineer "$API" "$API/src/auth.js")"
 expect "agent-scope allows a mutation inside a scratch copy" 0 agent-scope \
-    "$(agent_write unityworks-team:architecture-auditor "$SCRATCH/vision_os/x.py")"
-expect "agent-scope blocks a specialist committing" 2 agent-scope \
-    "$(agent_bash unityworks-team:backend-engineer "git add -A && git commit -m x")"
-expect "agent-scope blocks a specialist installing" 2 agent-scope \
-    "$(agent_bash unityworks-team:frontend-engineer "npm install left-pad")"
-expect "agent-scope blocks a specialist creating a worktree" 2 agent-scope \
-    "$(agent_bash unityworks-team:qa-engineer "git worktree add ../_audit HEAD")"
-expect "agent-scope blocks alembic upgrade on the configured database" 2 agent-scope \
-    "$(agent_bash unityworks-team:devops-engineer ".venv/Scripts/python.exe -m alembic upgrade head")"
-expect "agent-scope allows alembic upgrade on a disposable sqlite file" 0 agent-scope \
-    "$(agent_bash unityworks-team:devops-engineer "DATABASE_URL_OVERRIDE=sqlite+aiosqlite:///C:/tmp/x/check.db .venv/Scripts/python.exe -m alembic upgrade head")"
-expect "agent-scope lets a specialist run tests and read history" 0 agent-scope \
-    "$(agent_bash unityworks-team:qa-engineer "git log --oneline -5 && .venv/Scripts/python.exe -m pytest tests/app")"
-expect "agent-scope blocks the ai-ml-architect writing source" 2 agent-scope \
-    "$(agent_write unityworks-team:ai-ml-architect "$FIX/Unityworks_AI_Assistant/backend/app/llm/profiles.py")"
-expect "agent-scope lets the ai-ml-architect file its report" 0 agent-scope \
-    "$(agent_write unityworks-team:ai-ml-architect "$FIX/Unityworks_AI_Assistant/backend/docs/reviews/2026-09-17/ai-ml-architect.md")"
-expect "agent-scope accepts an unqualified roster name" 2 agent-scope \
-    "$(agent_write tech-lead "$BACKEND/app/main.py")"
+    "$(agent_write unityworks-team:architecture-auditor "$API" "$SCRATCH/src/auth.js")"
+expect "agent-scope blocks a plugin agent committing" 2 agent-scope \
+    "$(agent_bash unityworks-team:backend-engineer "$API" "git add -A && git commit -m x")"
+expect "agent-scope blocks a plugin agent installing" 2 agent-scope \
+    "$(agent_bash unityworks-team:frontend-engineer "$WEB" "npm install left-pad")"
+expect "agent-scope lets an agent run tests and read history" 0 agent-scope \
+    "$(agent_bash unityworks-team:qa-engineer "$API" "git log --oneline -5 && npm test")"
+expect "agent-scope restricts a project agent the conf names" 2 agent-scope \
+    "$(agent_write billing-expert "$API" "$API/src/billing.js")"
+expect "agent-scope leaves an agent the conf does not name alone" 0 agent-scope \
+    "$(agent_write general-purpose "$API" "$API/src/billing.js")"
 expect "agent-scope leaves the main session alone" 0 agent-scope \
-    '{"tool_name":"Write","tool_input":{"file_path":"/repo/app/auth/tokens.py","content":"x"}}'
-expect "agent-scope leaves other agents alone" 0 agent-scope \
-    "$(agent_bash general-purpose "git commit -m x")"
+    "$(printf '{"cwd":"%s","tool_name":"Write","tool_input":{"file_path":"%s/src/a.js","content":"x"}}' "$API" "$API")"
+expect "agent-scope applies a project advisor-block" 2 agent-scope \
+    "$(agent_bash unityworks-team:devops-engineer "$API" "npm run db migrate")"
+expect "agent-scope honours advisor-allow over advisor-block" 0 agent-scope \
+    "$(agent_bash unityworks-team:devops-engineer "$API" "npm run db migrate --dry-run")"
 expect_via_launcher "agent-scope blocks through run-hook.cmd" 2 agent-scope \
-    "$(agent_write unityworks-team:security-engineer "$BACKEND/app/auth/tokens.py")"
+    "$(agent_write unityworks-team:security-engineer "$API" "$API/src/auth.js")"
 
-# ---- verify-gate ----------------------------------------------------------
-#
-# Transcripts are JSONL with one message per line; only the tool_use fragments
-# the gate greps for are reproduced. Line order is what matters: a gate command
-# counts only if it appears after the last gated edit.
+# ---- verify-gate (gate) ---------------------------------------------------
 
 tx() {  # tx <name> <line>... — write a transcript, print its path
     local f="$FIX/$1.jsonl"; shift
-    printf '%s\n' "$@" > "$f"
-    printf '%s' "$f"
+    printf '%s\n' "$@" > "$f"; printf '%s' "$f"
 }
 t_edit() { printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":"%s","old_string":"a"}}]}}' "$1"; }
 t_bash() { printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"%s","description":"d"}}]}}' "$1"; }
 stop_payload() { printf '{"session_id":"s","transcript_path":"%s","stop_hook_active":%s}' "$1" "${2:-false}"; }
 
-T="$(tx backend-unverified "$(t_edit "$BACKEND/app/domain/audit.py")")"
-expect "verify-gate blocks a backend edit with no gate run" 2 verify-gate "$(stop_payload "$T")"
-expect_output "verify-gate names pytest when it never ran" "pytest" verify-gate "$(stop_payload "$T")"
+T="$(tx unverified "$(t_edit "$API/src/app.js")")"
+expect "verify-gate blocks an edit whose gate never ran" 2 verify-gate "$(stop_payload "$T")"
+expect_output "verify-gate names the declared command" "npm test" verify-gate "$(stop_payload "$T")"
 
-T="$(tx backend-verified \
-    "$(t_edit "$BACKEND/app/domain/audit.py")" \
-    "$(t_bash 'cd \\\"x\\\" && ruff check app tests && black --check app tests && pytest')")"
-expect "verify-gate allows a backend edit followed by the gate" 0 verify-gate "$(stop_payload "$T")"
+T="$(tx verified "$(t_edit "$API/src/app.js")" "$(t_bash 'cd \\\"x\\\" && npm test')")"
+expect "verify-gate allows an edit followed by its gate (escaped quotes in command)" 0 verify-gate "$(stop_payload "$T")"
 
-T="$(tx backend-stale \
-    "$(t_bash "ruff check app tests && black --check app tests && pytest")" \
-    "$(t_edit "$BACKEND/app/domain/audit.py")")"
+T="$(tx stale "$(t_bash "npm test")" "$(t_edit "$API/src/app.js")")"
 expect "verify-gate blocks when the gate ran only before the last edit" 2 verify-gate "$(stop_payload "$T")"
 
-T="$(tx backend-api \
-    "$(t_edit "$BACKEND/app/api/product.py")" \
-    "$(t_bash "ruff check app tests && black --check app tests && pytest")")"
-expect_output "verify-gate demands the contract check after a route edit" "export_openapi" verify-gate "$(stop_payload "$T")"
+T="$(tx routes "$(t_edit "$API/src/routes/users.js")" "$(t_bash "npm test")")"
+expect_output "verify-gate demands every gate watching the path" "export-schema" verify-gate "$(stop_payload "$T")"
 
-T="$(tx backend-docs "$(t_edit "$BACKEND/docs/notes.md")")"
-expect "verify-gate ignores a backend docs-only edit" 0 verify-gate "$(stop_payload "$T")"
+T="$(tx unwatched "$(t_edit "$API/docs/notes.md")")"
+expect "verify-gate ignores an edit no gate watches" 0 verify-gate "$(stop_payload "$T")"
 
-T="$(tx frontend-unverified "$(t_edit "$FRONTEND/src/features/alerts.tsx")")"
-expect_output "verify-gate names npm run verify for a frontend edit" "npm run verify" verify-gate "$(stop_payload "$T")"
+T="$(tx crlf "$(t_edit "$WEB/src/page.tsx")")"
+expect_output "verify-gate reads a CRLF team.conf" "npm run verify" verify-gate "$(stop_payload "$T")"
 
-T="$(tx frontend-verified "$(t_edit "$FRONTEND/src/features/alerts.tsx")" "$(t_bash "npm run verify")")"
-expect "verify-gate allows a frontend edit followed by verify" 0 verify-gate "$(stop_payload "$T")"
+T="$(tx plain "$(t_edit "$PLAIN/src/app.js")")"
+expect "verify-gate ignores a repository without team.conf" 0 verify-gate "$(stop_payload "$T")"
 
-T="$(tx other "$(t_edit "$OTHER/src/index.ts")")"
-expect "verify-gate ignores an unrelated repository" 0 verify-gate "$(stop_payload "$T")"
-
-T="$(tx active "$(t_edit "$BACKEND/app/domain/audit.py")")"
+T="$(tx active "$(t_edit "$API/src/app.js")")"
 expect "verify-gate never blocks twice in a row" 0 verify-gate "$(stop_payload "$T" true)"
-
 expect "verify-gate allows a missing transcript" 0 verify-gate "$(stop_payload "$FIX/nope.jsonl")"
 
-# On Windows both transcript_path and every edited file_path arrive as doubled
-# backslashes; neither may be mistaken for "no transcript" or "no repository".
-if [ -n "$(win "$BACKEND")" ]; then
-    T="$(tx windows "$(t_edit "$(win "$BACKEND")\\\\app\\\\domain\\\\audit.py")")"
+if [ -n "$(win "$API")" ]; then
+    T="$(tx windows "$(t_edit "$(win "$API")\\\\src\\\\app.js")")"
     expect "verify-gate blocks with Windows transcript and file paths" 2 verify-gate "$(stop_payload "$(win "$T")")"
-else
-    skip "verify-gate blocks with Windows transcript and file paths"
-fi
+else skip "verify-gate blocks with Windows transcript and file paths"; fi
 
-T="$(tx launcher "$(t_edit "$BACKEND/app/domain/audit.py")")"
+T="$(tx launcher "$(t_edit "$API/src/app.js")")"
 expect_via_launcher "verify-gate blocks through run-hook.cmd" 2 verify-gate "$(stop_payload "$T")"
 
-# ---- find-repo / locate-pair ----------------------------------------------
-#
-# Repositories are found by what is inside them. The fixtures deliberately use
-# folder names that share nothing with the real ones.
+# ---- find-repo / team-context ---------------------------------------------
 
-SCRIPTS="$(cd "$(dirname "$0")/../scripts" && pwd)"
-W="$FIX/renamed"
-mkdir -p "$W/work/be/.git" "$W/work/be/vision_os" "$W/work/be/scripts" \
-         "$W/work/fe/.git" "$W/work/fe/scripts" "$W/work/fe/src/shared/types" "$W/work/fe/src/deep" \
-         "$W/elsewhere/assist/.git" "$W/elsewhere/assist/app/llm" "$W/elsewhere/assist/app/cognitive_integration"
-touch "$W/work/be/scripts/export_openapi.py" "$W/work/fe/scripts/generate-types.mjs" \
-      "$W/elsewhere/assist/app/llm/profiles.py"
-
-# expect_found <name> <expected-path-or-empty> <kind> <start-dir>
-expect_found() {
+expect_found() {  # <name> <expected-path-or-empty> <kind> <start-dir>
     local out rc
     out="$(bash "$SCRIPTS/find-repo" "$3" "$4" 2>/dev/null)"; rc=$?
-    if [ -z "$2" ]; then
-        report "$1" 1 "$rc"
-    elif [ "$rc" -eq 0 ] && [ "$out" = "$2" ]; then
-        report "$1" 0 0
-    else
-        printf 'FAIL %s (exit %s, got "%s", expected "%s")\n' "$1" "$rc" "$out" "$2"; fail=$((fail + 1))
-    fi
+    if [ -z "$2" ]; then report "$1" 1 "$rc"
+    elif [ "$rc" -eq 0 ] && [ "$out" = "$2" ]; then report "$1" 0 0
+    else printf 'FAIL %s (exit %s, got "%s", expected "%s")\n' "$1" "$rc" "$out" "$2"; fail=$((fail + 1)); fi
 }
 
-expect_found "find-repo finds a renamed backend from deep inside the frontend" "$W/work/be" vision-backend "$W/work/fe/src/deep"
-expect_found "find-repo finds a renamed frontend from the folder above it" "$W/work/fe" vision-frontend "$W/work"
-expect_found "find-repo finds the assistant backend from inside itself" "$W/elsewhere/assist" ai-assistant-backend "$W/elsewhere/assist/app/llm"
-expect_found "find-repo reports nothing when no repository matches" "" ai-assistant-backend "$FIX/other-project"
+mkdir -p "$WEB/src/deep"
+expect_found "find-repo finds a repository by kind, not folder name" "$API" billing-api "$WEB/src/deep"
+expect_found "find-repo finds the repository it is inside" "$WEB" billing-web "$WEB/src/deep"
+expect_found "find-repo reports a kind nobody declares" "" billing-mobile "$WEB"
 
-for twin in one two; do mkdir -p "$W/twins/$twin/.git" "$W/twins/$twin/vision_os" "$W/twins/$twin/scripts"; touch "$W/twins/$twin/scripts/export_openapi.py"; done
-bash "$SCRIPTS/find-repo" vision-backend "$W/twins" >/dev/null 2>&1
-report "find-repo refuses to choose between two equally near backends" 2 $?
-expect_found "find-repo prefers the repository it is inside" "$BACKEND" vision-backend "$BACKEND/vision_os"
+for twin in one two; do
+    mkdir -p "$FIX/twins/$twin/.git" "$FIX/twins/$twin/.claude"
+    printf 'kind = twin-kind\n' > "$FIX/twins/$twin/.claude/team.conf"
+done
+bash "$SCRIPTS/find-repo" twin-kind "$FIX/twins" >/dev/null 2>&1
+report "find-repo refuses to choose between two equally near matches" 2 $?
 
-out="$(cd "$W/work/fe/src/deep" && bash "$SCRIPTS/locate-pair" --print 2>/dev/null)"
-case "$out" in
-    *"BACKEND=$W/work/be"*"FRONTEND=$W/work/fe"*) report "locate-pair resolves a renamed pair by contents" 0 0 ;;
-    *) printf 'FAIL locate-pair resolves a renamed pair by contents (got: %s)\n' "$out"; fail=$((fail + 1)) ;;
-esac
+expect_stdout "team-context resolves a related repository by kind" "REPO_WEB=$WEB" bash -c "cd '$API/src' && bash '$SCRIPTS/team-context'"
+expect_stdout "team-context resolves the reverse relation" "REPO_API=$API" bash -c "cd '$WEB' && bash '$SCRIPTS/team-context'"
+expect_stdout "team-context reads the reviews directory from a CRLF conf" "TEAM_REVIEWS=audit/reviews" bash -c "cd '$WEB' && bash '$SCRIPTS/team-context'"
+expect_stdout "team-context works without team.conf" "TEAM_CONFIGURED=no" bash -c "cd '$PLAIN' && bash '$SCRIPTS/team-context'"
+mkdir -p "$FIX/solo/.git" "$FIX/solo/.claude" && printf 'kind = solo\nrelated = gone :: missing-kind\n' > "$FIX/solo/.claude/team.conf"
+expect_stdout "team-context reports related repositories it cannot find" "TEAM_MISSING=GONE" bash -c "cd '$FIX/solo' && bash '$SCRIPTS/team-context'"
+
+# ---- run-check / standup --------------------------------------------------
+
+expect_stdout "run-check runs a named check with related repositories in its environment" "web=$WEB" bash -c "cd '$API' && bash '$SCRIPTS/run-check' ok"
+(cd "$API" && bash "$SCRIPTS/run-check" broken >/dev/null 2>&1); report "run-check fails when a check fails" 1 $?
+(cd "$API" && bash "$SCRIPTS/run-check" nosuch >/dev/null 2>&1); report "run-check rejects an unknown check name" 1 $?
+expect_stdout "run-check explains how to declare checks when there are none" "No checks declared" bash -c "cd '$PLAIN' && bash '$SCRIPTS/run-check'"
+expect_stdout "standup tells an unconfigured repository to run /team-init" "Run /team-init" bash -c "cd '$PLAIN' && bash '$SCRIPTS/standup'"
+expect_stdout "standup lists a configured repository's checks" "checks: ok broken " bash -c "cd '$API' && bash '$SCRIPTS/standup'"
 
 # ---------------------------------------------------------------------------
 
